@@ -1,0 +1,9 @@
+[
+    {
+      "origin": ["https://www.argus.fit"],
+      "method": ["PUT", "GET", "POST", "OPTIONS"],
+      "responseHeader": ["Content-Type", "x-goog-resumable"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+  
