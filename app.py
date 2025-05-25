@@ -53,6 +53,11 @@ def get_service_account_key():
     # Create credentials object from the secret JSON
     return service_account.Credentials.from_service_account_info(eval(secret_payload))
 
+def get_storage_client_with_credentials():
+    # Initialize Google Cloud Storage client with service account credentials
+    credentials = get_service_account_key()
+    return storage.Client(credentials=credentials)
+
 def download_video_from_gcs(bucket_name, source_blob_name, destination_file_name):
     # Downloads a video file from Google Cloud Storage.
     storage_client = storage.Client()
@@ -366,8 +371,7 @@ def generate_signed_url():
         if not file_name:
             return jsonify({'error': 'File name is required'}), 400
 
-        # Initialize storage client with the correct credentials
-        credentials = get_service_account_key()
+        storage_client = get_storage_client_with_credentials()
         storage_client = storage.Client(credentials=credentials)
         
         bucket_name = "gym-videos-in"
@@ -421,7 +425,7 @@ def process_video():
         analyzed_video_name = f"{video_id}_analyzed.mp4"
 
         # Check if analyzed video already exists
-        storage_client = storage.Client()
+        storage_client = get_storage_client_with_credentials()
         analyzed_bucket = storage_client.bucket("gym-videos-out")
         analyzed_blob = analyzed_bucket.blob(analyzed_video_name)
 
@@ -469,8 +473,20 @@ def process_video():
             logging.info("Temporary files cleaned up")
 
     except Exception as e:
-        logging.error(f"Error processing video: {e}", exc_info=True)
-        return jsonify({"error": "Internal Server Error"}), 200  # Return 200 to prevent retries  
+        error_message = "Internal Server Error during video processing"
+        status_code = 500
+        if isinstance(e, NotFound):
+            error_message = f"Resource not found: {e}"
+            status_code = 404
+        # Note: KeyError and ValueError handling was removed as per the unified diff request
+        elif isinstance(e, ValueError):
+             error_message = f"Invalid data in event payload: {e}"
+             status_code = 400
+        else:
+            # Log unhandled exceptions with full traceback
+            logging.error(f"Unhandled error processing video: {e}", exc_info=True)
+
+        return jsonify({"error": error_message}), status_code
 
 @app.route('/exercise-analysis/<video_id>', methods=['GET'])
 def get_exercise_analysis(video_id):
@@ -531,8 +547,7 @@ def save_video_info():
 def get_video_status(video_name):
     try:
         logging.info(f"Checking status for video: {video_name}")
-        
-        # Use the same credentials as generate_signed_url endpoint
+
         credentials = get_service_account_key()
         storage_client = storage.Client(credentials=credentials)
         
@@ -562,7 +577,7 @@ def get_video_status(video_name):
             return jsonify({'status': 'processing'})
         
         return jsonify({
-            'status': 'error',
+            'status': 'not found',
             'message': 'Video not found in either bucket'
         }), 404
 
