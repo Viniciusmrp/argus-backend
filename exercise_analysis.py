@@ -142,9 +142,9 @@ class SquatAnalyzer(ExerciseAnalyzer):
         super().__init__()
         
         # Enhanced thresholds for better detection
-        self.STANDING_KNEE_THRESHOLD = 160  # Minimum angle to be considered standing
-        self.BOTTOM_KNEE_THRESHOLD = 110    # Maximum angle to be considered in bottom position
-        self.MIN_DEPTH_THRESHOLD = 120      # Minimum depth required for a valid rep
+        self.STANDING_KNEE_THRESHOLD = 150  # Minimum angle to be considered standing
+        self.BOTTOM_KNEE_THRESHOLD = 100    # Maximum angle to be considered in bottom position
+        self.MIN_DEPTH_THRESHOLD = 110      # Minimum depth required for a valid rep
         
         # Exercise state detection parameters
         self.EXERCISE_DETECTION_WINDOW = 30  # frames to confirm exercise state
@@ -257,14 +257,14 @@ class SquatAnalyzer(ExerciseAnalyzer):
         hip_variation = np.std(list(self.hip_height_history)[-10:])
         
         # Check if person is in a reasonable squat-like position
-        is_squat_position = (90 <= knee_angle <= 170)  # Broader range for detection
-        has_movement = knee_variation > 5 or hip_variation > 0.01  # Some movement detected
+        is_squat_position = (80 <= knee_angle <= 175)  # Broader range for detection
+        has_movement = knee_variation > 2 or hip_variation > 0.005  # Some movement detected
         
         # Check if knee angle suggests squat-like movement (not just standing still)
         recent_knee_angles = list(self.knee_angle_history)[-5:]
         min_recent_knee = min(recent_knee_angles)
         max_recent_knee = max(recent_knee_angles)
-        has_knee_flexion = (max_recent_knee - min_recent_knee) > 10  # At least 10 degrees of movement
+        has_knee_flexion = (max_recent_knee - min_recent_knee) > 5  # At least 5 degrees of movement
         
         return is_squat_position and has_movement and has_knee_flexion
     
@@ -284,7 +284,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
             
         # State machine for exercise detection
         if self.exercise_state == "inactive":
-            if activity_ratio > 0.6:  # 60% of recent frames show exercise-like movement
+            if activity_ratio > 0.3:  # 30% of recent frames show exercise-like movement
                 self.consecutive_active_frames += 1
                 if self.consecutive_active_frames >= self.MIN_CONSECUTIVE_ACTIVE_FRAMES:
                     self.exercise_state = "starting"
