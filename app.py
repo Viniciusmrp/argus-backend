@@ -372,7 +372,6 @@ def generate_signed_url():
             return jsonify({'error': 'File name is required'}), 400
 
         storage_client = get_storage_client_with_credentials()
-        storage_client = storage.Client(credentials=credentials)
         
         bucket_name = "gym-videos-in"
         bucket = storage_client.bucket(bucket_name)

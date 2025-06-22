@@ -15,20 +15,45 @@ class ExerciseAnalyzer:
     def get_3d_point(self, landmark) -> np.ndarray:
         """Convert MediaPipe landmark to 3D numpy array"""
         return np.array([landmark.x, landmark.y, landmark.z])
-
-    def normalize_pose(self, landmarks) -> Dict[str, np.ndarray]:
-        """Normalize pose to be invariant to camera position"""
-        # Get hip points
+    
+    def get_body_coordinate_system(self, landmarks) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Calculates a coordinate system based on the person's body orientation. Returns three orthogonal vectors representing the new Y, Z, and X axes."""
         left_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
         right_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
-        
-        # Calculate hip center as origin
+        left_shoulder = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_SHOULDER])
+        right_shoulder = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_SHOULDER])
+
+        # Y-axis (Up): Vector from hip center to shoulder center
         hip_center = (left_hip + right_hip) / 2
-        
-        # Dictionary to store normalized points
+        shoulder_center = (left_shoulder + right_shoulder) / 2
+        y_axis = shoulder_center - hip_center
+        y_axis /= np.linalg.norm(y_axis)
+
+        # Z-axis (Forward/Backward): Vector perpendicular to the hips and the body's up-direction.
+        # We use the cross product to find a vector orthogonal to both the hip line and the up vector.
+        hip_line = right_hip - left_hip
+        z_axis = np.cross(y_axis, hip_line)
+        z_axis /= np.linalg.norm(z_axis)
+
+        # X-axis (Right/Left): Vector perpendicular to the Y and Z axes
+        x_axis = np.cross(y_axis, z_axis)
+        x_axis /= np.linalg.norm(x_axis)
+
+        return y_axis, z_axis, x_axis
+
+    def normalize_pose(self, landmarks) -> Dict[str, np.ndarray]:
+        """Normalize pose to be invariant to camera position and rotation."""
+        left_hip_3d = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
+        right_hip_3d = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
+        hip_center = (left_hip_3d + right_hip_3d) / 2
+
+        # 1. Get the body's coordinate system axes for the current frame
+        y_axis, z_axis, x_axis = self.get_body_coordinate_system(landmarks)
+
+        # Dictionary to store the newly calculated points
         normalized_points = {}
-        
-        # List of landmarks we want to normalize - focusing only on key points
+
+        # List of landmarks we want to transform into the new coordinate system
         landmark_list = [
             self.mp_pose.PoseLandmark.LEFT_SHOULDER,
             self.mp_pose.PoseLandmark.RIGHT_SHOULDER,
@@ -39,13 +64,20 @@ class ExerciseAnalyzer:
             self.mp_pose.PoseLandmark.LEFT_ANKLE,
             self.mp_pose.PoseLandmark.RIGHT_ANKLE
         ]
-        
-        # Normalize each point by centering on hip
-        for landmark in landmark_list:
-            point = self.get_3d_point(landmarks.landmark[landmark])
-            normalized = point - hip_center
-            normalized_points[landmark] = normalized
-            
+
+        for landmark_idx in landmark_list:
+            point_3d = self.get_3d_point(landmarks.landmark[landmark_idx])
+
+            # 2. Center the point around the hip origin
+            centered_point = point_3d - hip_center
+
+            # 3. Project the centered point onto the new axes to get the body-centric coordinates
+            new_x = np.dot(centered_point, x_axis)
+            new_y = np.dot(centered_point, y_axis)
+            new_z = np.dot(centered_point, z_axis)
+
+            normalized_points[landmark_idx] = np.array([new_x, new_y, new_z])
+
         return normalized_points
 
     def calculate_3d_angle(self, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> float:
