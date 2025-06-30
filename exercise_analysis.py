@@ -15,7 +15,7 @@ class ExerciseAnalyzer:
     def get_3d_point(self, landmark) -> np.ndarray:
         """Convert MediaPipe landmark to 3D numpy array"""
         return np.array([landmark.x, landmark.y, landmark.z])
-    
+
     def get_body_coordinate_system(self, landmarks) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Calculates a coordinate system based on the person's body orientation. Returns three orthogonal vectors representing the new Y, Z, and X axes."""
         left_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
@@ -169,9 +169,10 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.exercise_end_frame = None
         
         # Rep counting state machine
-        self.rep_state = "standing"  # "standing", "descending", "bottom", "ascending"
+        self.rep_state = "standing"  # "standing", "descending", "ascending"
         self.current_rep_start_frame = None
         self.current_rep_start_time = None
+        self.start_hip_height = None
         self.reps_completed = 0
         self.partial_reps = 0  # Count reps that don't meet depth requirements
         self.rep_details = []  # Store details about each rep
@@ -215,6 +216,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.rep_state = "standing"
         self.current_rep_start_frame = None
         self.current_rep_start_time = None
+        self.start_hip_height = None
         self.reps_completed = 0
         self.partial_reps = 0
         self.rep_details = []
@@ -324,10 +326,9 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 
         return self.exercise_state
     
-    def count_reps(self, knee_angle: float, hip_height: float, frame_idx: int, fps: float) -> Dict:
+    def count_reps(self, hip_height: float, hip_velocity: float, frame_idx: int, fps: float) -> Dict:
         """
-        Enhanced rep counting with state machine approach
-        Only counts reps during active exercise periods
+        More flexible rep counting based on hip movement dynamics.
         """
         rep_info = {
             'rep_completed': False,
@@ -335,50 +336,39 @@ class SquatAnalyzer(ExerciseAnalyzer):
             'current_reps': self.reps_completed,
             'partial_reps': self.partial_reps
         }
-        
-        # Only count reps when exercise is active
+
         if not self.is_analyzing:
             return rep_info
-            
+
         current_time = frame_idx / fps
-        
-        # Rep counting state machine
+
         if self.rep_state == "standing":
-            # Looking for start of descent
-            if knee_angle < self.STANDING_KNEE_THRESHOLD - 5:  # 5 degree buffer
+            # Check for start of descent (consistent downward hip movement)
+            if hip_velocity < -0.05:  # Threshold for downward velocity
                 self.rep_state = "descending"
                 self.current_rep_start_frame = frame_idx
                 self.current_rep_start_time = current_time
+                self.start_hip_height = hip_height
                 logging.info(f"Rep descent started at frame {frame_idx}")
-                
+
         elif self.rep_state == "descending":
-            # Check if reached bottom position
-            if knee_angle <= self.BOTTOM_KNEE_THRESHOLD:
-                self.rep_state = "bottom"
-                logging.info(f"Bottom position reached at frame {frame_idx}, knee angle: {knee_angle}")
-            # Check if person gave up and returned to standing without reaching bottom
-            elif knee_angle > self.STANDING_KNEE_THRESHOLD:
-                logging.info(f"Incomplete rep - returned to standing without reaching bottom")
+            # Check for bottom of squat (hip velocity changes from negative to positive)
+            if hip_velocity >= 0:
+                self.rep_state = "ascending"
+                logging.info(f"Bottom position reached at frame {frame_idx}")
+
+            # Handle incomplete rep (returns to standing height without reaching bottom)
+            elif hip_height >= self.start_hip_height:
                 self.partial_reps += 1
                 self.rep_state = "standing"
-                self.current_rep_start_frame = None
-                self.current_rep_start_time = None
-                
-        elif self.rep_state == "bottom":
-            # Check if starting to ascend (knee angle increasing)
-            if knee_angle > self.BOTTOM_KNEE_THRESHOLD + 10:  # 10 degree buffer to confirm ascent
-                self.rep_state = "ascending"
-                logging.info(f"Ascent started at frame {frame_idx}")
-                
+
+
         elif self.rep_state == "ascending":
-            # Check if returned to standing position
-            if knee_angle >= self.STANDING_KNEE_THRESHOLD:
-                # Validate the rep
+            # Check for end of rep (hip velocity approaches zero at standing height)
+            if hip_velocity < 0.05 and hip_height >= self.start_hip_height * 0.98: # 2% tolerance
                 rep_duration = current_time - self.current_rep_start_time
-                
-                # Check if rep meets timing and depth requirements
-                if (self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION):
-                    # Valid rep completed
+
+                if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
                     self.reps_completed += 1
                     rep_info['rep_completed'] = True
                     
@@ -392,32 +382,20 @@ class SquatAnalyzer(ExerciseAnalyzer):
                         'end_time': current_time
                     }
                     self.rep_details.append(rep_detail)
-                    
+
                     logging.info(f"Rep {self.reps_completed} completed in {rep_duration:.2f}s")
                 else:
-                    # Rep too fast or too slow
                     self.partial_reps += 1
                     logging.info(f"Invalid rep duration: {rep_duration:.2f}s")
-                
-                # Reset for next rep
+
                 self.rep_state = "standing"
-                self.current_rep_start_frame = None
-                self.current_rep_start_time = None
-            
-            # Check if person descended again without reaching standing (partial rep)
-            elif knee_angle < self.BOTTOM_KNEE_THRESHOLD + 20:
-                logging.info(f"Incomplete rep - didn't return to standing position")
-                self.partial_reps += 1
-                self.rep_state = "descending"
-                self.current_rep_start_frame = frame_idx
-                self.current_rep_start_time = current_time
-        
+
         rep_info.update({
             'rep_state': self.rep_state,
             'current_reps': self.reps_completed,
             'partial_reps': self.partial_reps
         })
-        
+
         return rep_info
             
     def detect_movement_phase(self, hip_height: float) -> bool:
@@ -446,16 +424,20 @@ class SquatAnalyzer(ExerciseAnalyzer):
         right_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
         hip_center = (left_hip + right_hip) / 2
         hip_height = hip_center[1]
+
+        # Calculate hip velocity
+        hip_velocity = 0
+        if self.prev_hip_height is not None:
+            hip_velocity = (hip_height - self.prev_hip_height) * fps
         
         # Update exercise state
         exercise_state = self.update_exercise_state(avg_knee_angle, hip_height, frame_idx)
         
         # Count reps (only during active exercise)
-        rep_info = self.count_reps(avg_knee_angle, hip_height, frame_idx, fps)
+        rep_info = self.count_reps(hip_height, hip_velocity, frame_idx, fps)
         
         # Only perform detailed analysis when exercise is active
         intensity_value = 0
-        hip_velocity = 0
         hip_acceleration = 0
         frame_volume = 0
         
@@ -463,20 +445,17 @@ class SquatAnalyzer(ExerciseAnalyzer):
             # Detect movement phase
             is_concentric = self.detect_movement_phase(hip_height)
             
-            # Calculate hip velocity and acceleration
-            if self.prev_hip_height is not None:
-                hip_velocity = (hip_height - self.prev_hip_height) * fps
+            # Calculate hip acceleration
+            if self.prev_hip_velocity is not None:
+                hip_acceleration = (hip_velocity - self.prev_hip_velocity) * fps
                 
-                if self.prev_hip_velocity is not None:
-                    hip_acceleration = (hip_velocity - self.prev_hip_velocity) * fps
-                    
-                    if is_concentric:
-                        intensity_value = abs(hip_acceleration)
-                    else:
-                        intensity_value = 1.0 / (1.0 + abs(hip_acceleration))
-                    
-                    self.avg_acceleration.append(intensity_value)
-                    self.max_acceleration = max(self.max_acceleration, intensity_value)
+                if is_concentric:
+                    intensity_value = abs(hip_acceleration)
+                else:
+                    intensity_value = 1.0 / (1.0 + abs(hip_acceleration))
+                
+                self.avg_acceleration.append(intensity_value)
+                self.max_acceleration = max(self.max_acceleration, intensity_value)
             
             # Calculate volume only in concentric phase during active exercise
             if is_concentric and self.prev_hip_height is not None and self.user_weight > 0:
@@ -510,12 +489,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
             }
             
             self.frame_metrics.append(frame_data)
-            self.prev_hip_velocity = hip_velocity
             self.concentric_phase = is_concentric
         
         # Always update previous values
         self.prev_knee_angle = avg_knee_angle
         self.prev_hip_height = hip_height
+        self.prev_hip_velocity = hip_velocity
         
         # Draw landmarks based on exercise state
         self.draw_landmarks_with_state(frame, landmarks, exercise_state, rep_info)
