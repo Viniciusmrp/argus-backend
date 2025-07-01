@@ -275,6 +275,8 @@ def analyze_video(video_path, metadata, output_path):
         # Get final analysis after processing all frames
         analysis_results = exercise_analyzer.get_final_analysis()
 
+        logging.info(f"Final analysis results: {analysis_results}")
+
         # Extract video ID with logging
         original_video_name = metadata.get('videoName')
         video_id = original_video_name.split('.')[0] if original_video_name else video_path.split('/')[-1].split('.')[0]
