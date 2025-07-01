@@ -366,6 +366,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
             else:
                 self.standing_confirmation_frames = 0
 
+            # Confirm the rep only if the user is stable at the top for enough frames
             if self.standing_confirmation_frames >= self.REP_CONFIRMATION_FRAMES:
                 rep_duration = current_time - self.current_rep_start_time
 
@@ -384,9 +385,10 @@ class SquatAnalyzer(ExerciseAnalyzer):
                     self.rep_details.append(rep_detail)
                     logging.info(f"Rep {self.reps_completed} completed in {rep_duration:.2f}s")
                 
+                # Transition to standing and reset for the next rep
                 self.rep_state = "standing"
                 self.standing_confirmation_frames = 0
-
+                
         rep_info.update({
             'rep_state': self.rep_state,
             'current_reps': self.reps_completed
