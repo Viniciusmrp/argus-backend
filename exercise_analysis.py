@@ -174,7 +174,6 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.current_rep_start_time = None
         self.start_hip_height = None
         self.reps_completed = 0
-        self.partial_reps = 0  # Count reps that don't meet depth requirements
         self.rep_details = []  # Store details about each rep
         
         # Tracking variables for metrics (only during active exercise)
@@ -191,6 +190,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.max_acceleration = 0
         self.avg_acceleration = []
         self.concentric_phase = False
+        self.standing_confirmation_frames = 0
         
         # Previous state variables
         self.prev_knee_angle = None
@@ -218,7 +218,6 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.current_rep_start_time = None
         self.start_hip_height = None
         self.reps_completed = 0
-        self.partial_reps = 0
         self.rep_details = []
         
         # Reset analysis tracking
@@ -333,8 +332,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
         rep_info = {
             'rep_completed': False,
             'rep_state': self.rep_state,
-            'current_reps': self.reps_completed,
-            'partial_reps': self.partial_reps
+            'current_reps': self.reps_completed
         }
 
         if not self.is_analyzing:
@@ -344,11 +342,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
         if self.rep_state == "standing":
             # Check for start of descent (consistent downward hip movement)
-            if hip_velocity < -0.05:  # Threshold for downward velocity
+            if hip_velocity < -0.05:
                 self.rep_state = "descending"
                 self.current_rep_start_frame = frame_idx
                 self.current_rep_start_time = current_time
                 self.start_hip_height = hip_height
+                self.standing_confirmation_frames = 0
                 logging.info(f"Rep descent started at frame {frame_idx}")
 
         elif self.rep_state == "descending":
@@ -357,22 +356,23 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 self.rep_state = "ascending"
                 logging.info(f"Bottom position reached at frame {frame_idx}")
 
-            # Handle incomplete rep (returns to standing height without reaching bottom)
-            elif hip_height >= self.start_hip_height:
-                self.partial_reps += 1
-                self.rep_state = "standing"
-
-
         elif self.rep_state == "ascending":
-            # Check for end of rep (hip velocity approaches zero at standing height)
-            if hip_velocity < 0.05 and hip_height >= self.start_hip_height * 0.98: # 2% tolerance
+            # Check if user has returned to the top and stopped moving
+            is_at_top = hip_height >= self.start_hip_height * 0.98
+            is_stopped = abs(hip_velocity) < 0.1
+
+            if is_at_top and is_stopped:
+                self.standing_confirmation_frames += 1
+            else:
+                self.standing_confirmation_frames = 0
+
+            if self.standing_confirmation_frames >= self.REP_CONFIRMATION_FRAMES:
                 rep_duration = current_time - self.current_rep_start_time
 
                 if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
                     self.reps_completed += 1
                     rep_info['rep_completed'] = True
                     
-                    # Store rep details
                     rep_detail = {
                         'rep_number': self.reps_completed,
                         'start_frame': self.current_rep_start_frame,
@@ -382,18 +382,24 @@ class SquatAnalyzer(ExerciseAnalyzer):
                         'end_time': current_time
                     }
                     self.rep_details.append(rep_detail)
-
                     logging.info(f"Rep {self.reps_completed} completed in {rep_duration:.2f}s")
-                else:
-                    self.partial_reps += 1
-                    logging.info(f"Invalid rep duration: {rep_duration:.2f}s")
-
+                
                 self.rep_state = "standing"
+                self.standing_confirmation_frames = 0
+
+            # Handle reversal of direction during ascent
+            elif hip_velocity < -0.05:
+                logging.info("Reversed direction during ascent.")
+                self.rep_state = "descending"
+                self.current_rep_start_frame = frame_idx
+                self.current_rep_start_time = current_time
+                self.start_hip_height = hip_height
+                self.standing_confirmation_frames = 0
+
 
         rep_info.update({
             'rep_state': self.rep_state,
-            'current_reps': self.reps_completed,
-            'partial_reps': self.partial_reps
+            'current_reps': self.reps_completed
         })
 
         return rep_info
@@ -599,12 +605,8 @@ class SquatAnalyzer(ExerciseAnalyzer):
         
         intensity_score = min(100, avg_intensity * 50) if avg_intensity > 0 else 0
         
-        # Rep quality bonus (higher score for more completed reps vs partial reps)
-        total_attempts = self.reps_completed + self.partial_reps
-        rep_accuracy = (self.reps_completed / total_attempts * 100) if total_attempts > 0 else 0
-        
         # Weighted total score
-        total_score = (volume_score * 0.3) + (intensity_score * 0.2) + (tut_score * 0.3) + (rep_accuracy * 0.2)
+        total_score = (volume_score * 0.4) + (intensity_score * 0.3) + (tut_score * 0.3)
         
         analysis_results = {
             'status': 'success',
@@ -616,9 +618,6 @@ class SquatAnalyzer(ExerciseAnalyzer):
             },
             'rep_counting': {
                 'completed_reps': self.reps_completed,
-                'partial_reps': self.partial_reps,
-                'total_attempts': self.reps_completed + self.partial_reps,
-                'rep_accuracy': rep_accuracy,
                 'rep_details': self.rep_details
             },
             'metrics': {
@@ -630,7 +629,6 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 'volume_score': float(volume_score),
                 'intensity_score': float(intensity_score),
                 'tut_score': float(tut_score),
-                'rep_accuracy_score': float(rep_accuracy),
                 'total_score': float(total_score)
             },
             'time_series': time_series,
