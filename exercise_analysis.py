@@ -152,7 +152,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.MIN_CONSECUTIVE_INACTIVE_FRAMES = 60  # minimum frames to confirm exercise end
         
         # Rep counting parameters
-        self.REP_CONFIRMATION_FRAMES = 10   # frames to confirm a rep transition
+        self.REP_CONFIRMATION_FRAMES = 5   # frames to confirm a rep transition
         self.MIN_REP_DURATION = 1.0         # minimum seconds for a valid rep
         self.MAX_REP_DURATION = 8.0         # maximum seconds for a valid rep
         
@@ -386,16 +386,6 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 
                 self.rep_state = "standing"
                 self.standing_confirmation_frames = 0
-
-            # Handle reversal of direction during ascent
-            elif hip_velocity < -0.05:
-                logging.info("Reversed direction during ascent.")
-                self.rep_state = "descending"
-                self.current_rep_start_frame = frame_idx
-                self.current_rep_start_time = current_time
-                self.start_hip_height = hip_height
-                self.standing_confirmation_frames = 0
-
 
         rep_info.update({
             'rep_state': self.rep_state,
