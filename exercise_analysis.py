@@ -327,7 +327,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
     
     def count_reps(self, hip_height: float, hip_velocity: float, frame_idx: int, fps: float) -> Dict:
         """
-        More flexible rep counting based on hip movement dynamics.
+        More flexible rep counting based on hip movement dynamics, always active.
         """
         rep_info = {
             'rep_completed': False,
@@ -335,9 +335,8 @@ class SquatAnalyzer(ExerciseAnalyzer):
             'current_reps': self.reps_completed
         }
 
-        # Start counting reps even if the exercise state is just "starting"
-        if self.exercise_state not in ["active", "starting"]:
-            return rep_info
+        # The check 'if not self.is_analyzing:' has been removed to ensure
+        # the counter runs from the very first frame.
 
         current_time = frame_idx / fps
 
@@ -359,7 +358,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
         elif self.rep_state == "ascending":
             # Check if user has returned to the top and stopped moving
-            is_at_top = hip_height >= self.start_hip_height * 0.98 if self.start_hip_height else False
+            is_at_top = hip_height >= self.start_hip_height * 0.98 if self.start_hip_height is not None else False
             is_stopped = abs(hip_velocity) < 0.1
 
             if is_at_top and is_stopped:
@@ -369,7 +368,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
             # Confirm the rep only if the user is stable at the top for enough frames
             if self.standing_confirmation_frames >= self.REP_CONFIRMATION_FRAMES:
-                rep_duration = current_time - self.current_rep_start_time if self.current_rep_start_time else 0
+                rep_duration = current_time - self.current_rep_start_time if self.current_rep_start_time is not None else 0
 
                 if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
                     self.reps_completed += 1
