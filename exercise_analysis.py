@@ -147,13 +147,13 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.MIN_DEPTH_THRESHOLD = 110      # Minimum depth required for a valid rep
         
         # Exercise state detection parameters
-        self.EXERCISE_DETECTION_WINDOW = 30  # frames to confirm exercise state
-        self.MIN_CONSECUTIVE_ACTIVE_FRAMES = 15  # minimum frames to confirm exercise start
+        self.EXERCISE_DETECTION_WINDOW = 20  # frames to confirm exercise state
+        self.MIN_CONSECUTIVE_ACTIVE_FRAMES = 5  # minimum frames to confirm exercise start
         self.MIN_CONSECUTIVE_INACTIVE_FRAMES = 60  # minimum frames to confirm exercise end
         
         # Rep counting parameters
-        self.REP_CONFIRMATION_FRAMES = 5   # frames to confirm a rep transition
-        self.MIN_REP_DURATION = 1.0         # minimum seconds for a valid rep
+        self.REP_CONFIRMATION_FRAMES = 3   # frames to confirm a rep transition
+        self.MIN_REP_DURATION = 0.8         # minimum seconds for a valid rep
         self.MAX_REP_DURATION = 8.0         # maximum seconds for a valid rep
         
         # State tracking with sliding windows
@@ -285,7 +285,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
             
         # State machine for exercise detection
         if self.exercise_state == "inactive":
-            if activity_ratio > 0.3:  # 30% of recent frames show exercise-like movement
+            if activity_ratio > 0.2:  # 20% of recent frames show exercise-like movement
                 self.consecutive_active_frames += 1
                 if self.consecutive_active_frames >= self.MIN_CONSECUTIVE_ACTIVE_FRAMES:
                     self.exercise_state = "starting"
@@ -295,12 +295,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 self.consecutive_active_frames = 0
                 
         elif self.exercise_state == "starting":
-            if activity_ratio > 0.7:  # Higher threshold to confirm
+            if activity_ratio > 0.5:  # Lower threshold to confirm faster
                 self.exercise_state = "active"
                 self.analysis_start_frame = frame_idx
                 self.is_analyzing = True
                 logging.info(f"Exercise confirmed active at frame {frame_idx}")
-            elif activity_ratio < 0.3:  # False start
+            elif activity_ratio < 0.2:  # False start
                 self.exercise_state = "inactive"
                 self.consecutive_active_frames = 0
                 
@@ -335,7 +335,8 @@ class SquatAnalyzer(ExerciseAnalyzer):
             'current_reps': self.reps_completed
         }
 
-        if not self.is_analyzing:
+        # Start counting reps even if the exercise state is just "starting"
+        if self.exercise_state not in ["active", "starting"]:
             return rep_info
 
         current_time = frame_idx / fps
@@ -358,7 +359,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
         elif self.rep_state == "ascending":
             # Check if user has returned to the top and stopped moving
-            is_at_top = hip_height >= self.start_hip_height * 0.98
+            is_at_top = hip_height >= self.start_hip_height * 0.98 if self.start_hip_height else False
             is_stopped = abs(hip_velocity) < 0.1
 
             if is_at_top and is_stopped:
@@ -368,7 +369,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
             # Confirm the rep only if the user is stable at the top for enough frames
             if self.standing_confirmation_frames >= self.REP_CONFIRMATION_FRAMES:
-                rep_duration = current_time - self.current_rep_start_time
+                rep_duration = current_time - self.current_rep_start_time if self.current_rep_start_time else 0
 
                 if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
                     self.reps_completed += 1
