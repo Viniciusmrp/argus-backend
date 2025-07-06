@@ -137,6 +137,25 @@ def debug_video_metadata(input_path):
     except Exception as e:
         logging.error(f"Error getting debug metadata: {str(e)}")
 
+def convert_numpy_types(obj):
+    """Convert NumPy types to native Python types for Firestore compatibility"""
+    import numpy as np
+    
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    else:
+        return obj
+
 def analyze_video(video_path, metadata, output_path):
     """
     Analyze the video using MediaPipe's 3D pose estimation, draw landmarks, and save the analyzed video.
@@ -267,9 +286,9 @@ def analyze_video(video_path, metadata, output_path):
         
         # Save analysis results to Firestore
         try:
-            # The 'analysis_results' are now already in the correct format.
-            # We send them directly to Firestore without any extra conversion.
-            db.collection("exerciseAnalysis").document(video_id).set(analysis_results)
+            # Convert NumPy types to native Python types for Firestore compatibility
+            firestore_compatible_results = convert_numpy_types(analysis_results)
+            db.collection("exerciseAnalysis").document(video_id).set(firestore_compatible_results)
             logging.info(f"Successfully saved analysis results to Firestore with ID: {video_id}")
         except Exception as e:
             logging.error(f"Error saving to Firestore. Video ID: {video_id}, Error: {str(e)}")
