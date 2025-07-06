@@ -270,9 +270,17 @@ class SquatAnalyzer(ExerciseAnalyzer):
         return self.convert_numpy_types(analysis_results)
 
     def convert_numpy_types(self, obj):
-        if isinstance(obj, np.integer): return int(obj)
-        if isinstance(obj, np.floating): return float(obj)
-        if isinstance(obj, np.ndarray): return obj.tolist()
-        if isinstance(obj, dict): return {k: self.convert_numpy_types(v) for k, v in obj.items()}
-        if isinstance(obj, list): return [self.convert_numpy_types(i) for i in obj]
+        """Recursively convert NumPy types to native Python types for JSON compatibility."""
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_): # <--- THIS LINE WAS MISSING
+            return bool(obj)
+        elif isinstance(obj, dict):
+            return {k: self.convert_numpy_types(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.convert_numpy_types(i) for i in obj]
         return obj
