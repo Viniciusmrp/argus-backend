@@ -300,6 +300,10 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 self.analysis_start_frame = frame_idx
                 self.is_analyzing = True
                 logging.info(f"Exercise confirmed active at frame {frame_idx}")
+                
+                if self.rep_state == "standing":
+                    self.rep_state = "descending"
+
             elif activity_ratio < 0.2:  # False start
                 self.exercise_state = "inactive"
                 self.consecutive_active_frames = 0
