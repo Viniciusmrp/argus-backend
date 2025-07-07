@@ -300,7 +300,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 self.analysis_start_frame = frame_idx
                 self.is_analyzing = True
                 logging.info(f"Exercise confirmed active at frame {frame_idx}")
-                
+
                 if self.rep_state == "standing":
                     self.rep_state = "descending"
 
@@ -604,6 +604,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
         # Weighted total score
         total_score = (volume_score * 0.4) + (intensity_score * 0.3) + (tut_score * 0.3)
         
+        # Calculate average repetition time
+        avg_rep_time = 0
+        if self.rep_details:
+            total_rep_duration = sum(rep['duration'] for rep in self.rep_details)
+            avg_rep_time = total_rep_duration / len(self.rep_details)
+
         analysis_results = {
             'status': 'success',
             'exercise_detection': {
@@ -622,6 +628,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 'max_intensity': float(self.max_acceleration),
                 'avg_intensity': float(avg_intensity),
                 'time_under_tension': float(self.total_tension_time),
+                'avg_repetition_time': float(avg_rep_time),
                 'volume_score': float(volume_score),
                 'intensity_score': float(intensity_score),
                 'tut_score': float(tut_score),
