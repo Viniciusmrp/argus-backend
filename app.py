@@ -185,7 +185,6 @@ def analyze_video(video_path, metadata, output_path):
     # Initialize MediaPipe pose solution with 3D tracking
     mp_drawing = mp.solutions.drawing_utils
     mp_pose = mp.solutions.pose
-    mp_drawing_styles = mp.solutions.drawing_styles
     
     pose = mp_pose.Pose(
         min_detection_confidence=0.9,
@@ -254,12 +253,12 @@ def analyze_video(video_path, metadata, output_path):
 
             # Draw landmarks with 3D visualization - simplified to just show specific landmarks
             frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-            if results.pose_landmarks:
+            if results.pose_world_landmarks:
                 landmarks_detected += 1
                 
-                # Process frame with the exercise analyzer - this now draws only selected landmarks
+                # Pass the entire 'results' object to the analyzer
                 frame_metrics = exercise_analyzer.analyze_frame(
-                    results.pose_landmarks,
+                    results, # Pass the whole object
                     frame_count,
                     fps,
                     frame
