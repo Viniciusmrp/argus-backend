@@ -41,13 +41,25 @@ class ExerciseAnalyzer:
         return np.array([landmark.x, landmark.y, landmark.z])
 
     def calculate_3d_angle(self, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> float:
-        """Calculate angle between three 3D points."""
+        """Calculate angle between three 3D points robustly."""
         v1 = p1 - p2
         v2 = p3 - p2
-        v1_norm = v1 / np.linalg.norm(v1)
-        v2_norm = v2 / np.linalg.norm(v2)
+
+        # **** ROBUSTNESS FIX ****
+        # Check for zero vectors to prevent division by zero
+        norm_v1 = np.linalg.norm(v1)
+        norm_v2 = np.linalg.norm(v2)
+        if norm_v1 == 0 or norm_v2 == 0:
+            return 0.0 # Or np.nan, but 0.0 is safer for JSON
+
+        v1_norm = v1 / norm_v1
+        v2_norm = v2 / norm_v2
+        
+        # Calculate angle using dot product, clipping to avoid math errors
         cos_angle = np.clip(np.dot(v1_norm, v2_norm), -1.0, 1.0)
-        return np.degrees(np.arccos(cos_angle))
+        angle = np.degrees(np.arccos(cos_angle))
+        
+        return angle
 
     def calculate_all_joint_angles(self, world_landmarks) -> Dict[str, float]:
         """Calculate all relevant joint angles from world landmarks."""
@@ -93,14 +105,13 @@ class SquatAnalyzer(ExerciseAnalyzer):
     """Analyzer specific to squat exercises, using world landmarks."""
     def __init__(self):
         super().__init__()
+        # Initialize all necessary variables for analysis
         self.frame_metrics = []
         self.user_weight = 0
         self.exercise_state = "inactive"
-        # You can re-implement your more detailed state tracking here if needed
-        # For now, keeping it simple to ensure data flows correctly.
+        # Add back other state variables as you rebuild the logic
         self.reps_completed = 0
         self.rep_state = "standing"
-
 
     def set_user_weight(self, load_kg: float):
         """Set the user's loaded weight for volume calculations"""
@@ -143,20 +154,13 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
     def draw_landmarks_with_state(self, frame, landmarks, exercise_state: str, rep_info: Dict):
         """Draw landmarks with different colors based on exercise state"""
-        # This is a placeholder for your drawing logic. You can customize colors
-        # and connections as needed.
-        line_color = (128, 128, 128) # Gray for inactive
-        if exercise_state == "active":
-            line_color = (0, 255, 0) # Green for active
-
-        connections = self.mp_pose.POSE_CONNECTIONS
-        if connections:
-            self.mp_drawing.draw_landmarks(
-                frame,
-                landmarks,
-                connections,
-                landmark_drawing_spec=self.mp_drawing_styles.get_default_pose_landmarks_style()
-            )
+        # Using the standard mediapipe drawing utils for simplicity and robustness
+        self.mp_drawing.draw_landmarks(
+            frame,
+            landmarks,
+            self.mp_pose.POSE_CONNECTIONS,
+            landmark_drawing_spec=self.mp_drawing_styles.get_default_pose_landmarks_style()
+        )
 
     def get_final_analysis(self) -> Dict:
         """Get the final analysis with the complete time series data."""
@@ -169,7 +173,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
         analysis_results = {
             'status': 'success',
             'rep_counting': {
-                'completed_reps': self.reps_completed,
+                'completed_reps': self.reps_completed, # Placeholder
             },
             'metrics': {
                 'total_frames_analyzed': len(self.frame_metrics),
