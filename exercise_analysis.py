@@ -90,56 +90,27 @@ class ExerciseAnalyzer:
         return velocities, accelerations
 
 class SquatAnalyzer(ExerciseAnalyzer):
-    """Analyzer specific to squat exercises, adapted for world landmarks."""
+    """Analyzer specific to squat exercises, using world landmarks."""
     def __init__(self):
         super().__init__()
-        self.STANDING_KNEE_THRESHOLD = 150
-        self.BOTTOM_KNEE_THRESHOLD = 100
-        self.MIN_DEPTH_THRESHOLD = 110
-        self.EXERCISE_DETECTION_WINDOW = 20
-        self.MIN_CONSECUTIVE_ACTIVE_FRAMES = 5
-        self.MIN_CONSECUTIVE_INACTIVE_FRAMES = 60
-        self.REP_CONFIRMATION_FRAMES = 3
-        self.MIN_REP_DURATION = 0.8
-        self.MAX_REP_DURATION = 8.0
-        self.activity_window = deque(maxlen=self.EXERCISE_DETECTION_WINDOW)
-        self.knee_angle_history = deque(maxlen=60)
-        self.hip_height_history = deque(maxlen=60)
-        self.exercise_state = "inactive"
-        self.consecutive_active_frames = 0
-        self.consecutive_inactive_frames = 0
-        self.exercise_start_frame = None
-        self.exercise_end_frame = None
-        self.rep_state = "standing"
-        self.current_rep_start_frame = None
-        self.current_rep_start_time = None
-        self.start_hip_height = None
-        self.reps_completed = 0
-        self.rep_details = []
-        self.is_analyzing = False
-        self.analysis_start_frame = None
-        self.start_time = 0
-        self.total_tension_time = 0
         self.frame_metrics = []
-        self.total_volume = 0
-        self.accumulated_volume_over_time = []
         self.user_weight = 0
-        self.max_acceleration = 0
-        self.avg_acceleration = []
-        self.concentric_phase = False
-        self.standing_confirmation_frames = 0
-        self.prev_knee_angle = None
-        self.prev_velocity = None
-        self.prev_hip_height = None
-        self.prev_hip_velocity = 0
+        self.exercise_state = "inactive"
+        # You can re-implement your more detailed state tracking here if needed
+        # For now, keeping it simple to ensure data flows correctly.
+        self.reps_completed = 0
+        self.rep_state = "standing"
 
-    # **** THIS IS THE FIX ****
-    # Add the missing method back into the class
+
     def set_user_weight(self, load_kg: float):
         """Set the user's loaded weight for volume calculations"""
         self.user_weight = load_kg
 
     def analyze_frame(self, pose_results, frame_idx: int, fps: float, frame) -> Optional[Dict]:
+        """
+        Analyze a single frame using world landmarks for kinetics and angles,
+        and image landmarks for drawing.
+        """
         if not pose_results.pose_world_landmarks or not pose_results.pose_landmarks:
             self.prev_world_landmarks = None
             self.prev_velocities = {}
@@ -147,56 +118,80 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
         world_landmarks = pose_results.pose_world_landmarks
         image_landmarks = pose_results.pose_landmarks
-
+        
         joint_angles = self.calculate_all_joint_angles(world_landmarks)
         velocities, accelerations = self.calculate_kinetics(world_landmarks, fps)
 
-        # Your squat analysis logic will go here. For now, we are just returning the raw data.
-        # This part will need further adaptation.
-
-        self.prev_world_landmarks = world_landmarks
-        self.prev_velocities = velocities
-
-        # Draw landmarks using image_landmarks for correct overlay
-        self.draw_landmarks_with_state(frame, image_landmarks, self.exercise_state, {'rep_state': self.rep_state, 'current_reps': self.reps_completed})
-
-        return {
+        frame_data = {
             'frame_index': frame_idx,
             'timestamp': frame_idx / fps,
             'joint_angles': joint_angles,
             'velocities': {name: vel.tolist() for name, vel in velocities.items()},
             'accelerations': {name: acc.tolist() for name, acc in accelerations.items()}
         }
+        
+        self.frame_metrics.append(frame_data)
 
-    # You will need to adapt the logic inside these methods to use the new detailed data
+        # Update state for the next frame
+        self.prev_world_landmarks = world_landmarks
+        self.prev_velocities = velocities
+
+        # Draw the landmarks on the frame using image_landmarks
+        self.draw_landmarks_with_state(frame, image_landmarks, self.exercise_state, {})
+        
+        return frame_data
+
     def draw_landmarks_with_state(self, frame, landmarks, exercise_state: str, rep_info: Dict):
         """Draw landmarks with different colors based on exercise state"""
-        # (Your existing drawing logic here)
-        line_color = (128, 128, 128)
+        # This is a placeholder for your drawing logic. You can customize colors
+        # and connections as needed.
+        line_color = (128, 128, 128) # Gray for inactive
         if exercise_state == "active":
-            line_color = (0, 255, 0)
-        
-        selected_connections = [
-            (self.mp_pose.PoseLandmark.LEFT_SHOULDER, self.mp_pose.PoseLandmark.LEFT_HIP),
-            (self.mp_pose.PoseLandmark.RIGHT_SHOULDER, self.mp_pose.PoseLandmark.RIGHT_HIP),
-            (self.mp_pose.PoseLandmark.LEFT_HIP, self.mp_pose.PoseLandmark.RIGHT_HIP),
-            (self.mp_pose.PoseLandmark.LEFT_HIP, self.mp_pose.PoseLandmark.LEFT_KNEE),
-            (self.mp_pose.PoseLandmark.RIGHT_HIP, self.mp_pose.PoseLandmark.RIGHT_KNEE),
-            (self.mp_pose.PoseLandmark.LEFT_KNEE, self.mp_pose.PoseLandmark.LEFT_ANKLE),
-            (self.mp_pose.PoseLandmark.RIGHT_KNEE, self.mp_pose.PoseLandmark.RIGHT_ANKLE)
-        ]
+            line_color = (0, 255, 0) # Green for active
 
-        h, w = frame.shape[:2]
-        for connection in selected_connections:
-            start_idx, end_idx = connection
-            start_point = landmarks.landmark[start_idx]
-            end_point = landmarks.landmark[end_idx]
-            
-            start_pixel = (int(start_point.x * w), int(start_point.y * h))
-            end_pixel = (int(end_point.x * w), int(end_point.y * h))
-            
-            cv2.line(frame, start_pixel, end_pixel, line_color, 2)
+        connections = self.mp_pose.POSE_CONNECTIONS
+        if connections:
+            self.mp_drawing.draw_landmarks(
+                frame,
+                landmarks,
+                connections,
+                landmark_drawing_spec=self.mp_drawing_styles.get_default_pose_landmarks_style()
+            )
 
     def get_final_analysis(self) -> Dict:
-        # This method also needs to be adapted to process the new `frame_metrics` format
-        return {"status": "success", "metrics": self.frame_metrics}
+        """Get the final analysis with the complete time series data."""
+        if not self.frame_metrics:
+            return {'status': 'error', 'message': 'No frames were analyzed.'}
+
+        # The core of the final result is the detailed time_series data.
+        # You can add back your higher-level scoring (Volume, TUT, etc.) here
+        # by processing the data in self.frame_metrics.
+        analysis_results = {
+            'status': 'success',
+            'rep_counting': {
+                'completed_reps': self.reps_completed,
+            },
+            'metrics': {
+                'total_frames_analyzed': len(self.frame_metrics),
+            },
+            'time_series': self.frame_metrics
+        }
+        
+        return self.convert_numpy_types(analysis_results)
+
+    def convert_numpy_types(self, obj):
+        """Recursively converts numpy types to native Python types for Firestore compatibility."""
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, dict):
+            return {key: self.convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self.convert_numpy_types(item) for item in obj]
+        else:
+            return obj
