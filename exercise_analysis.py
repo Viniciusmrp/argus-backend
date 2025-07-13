@@ -62,7 +62,15 @@ class ExerciseAnalyzer:
             self.mp_pose.PoseLandmark.LEFT_KNEE,
             self.mp_pose.PoseLandmark.RIGHT_KNEE,
             self.mp_pose.PoseLandmark.LEFT_ANKLE,
-            self.mp_pose.PoseLandmark.RIGHT_ANKLE
+            self.mp_pose.PoseLandmark.RIGHT_ANKLE,
+            self.mp_pose.PoseLandmark.LEFT_ELBOW,
+            self.mp_pose.PoseLandmark.RIGHT_ELBOW,
+            self.mp_pose.PoseLandmark.LEFT_WRIST,
+            self.mp_pose.PoseLandmark.RIGHT_WRIST,
+            self.mp_pose.PoseLandmark.LEFT_FOOT_INDEX,
+            self.mp_pose.PoseLandmark.RIGHT_FOOT_INDEX,
+            self.mp_pose.PoseLandmark.LEFT_THUMB,
+            self.mp_pose.PoseLandmark.RIGHT_THUMB
         ]
 
         for landmark_idx in landmark_list:
@@ -107,14 +115,12 @@ class ExerciseAnalyzer:
         """Calculate relevant joint angles from normalized pose"""
         angles = {}
         
-        # Left knee angle
+        # Knee angles
         angles['left_knee'] = self.calculate_3d_angle(
             normalized_points[self.mp_pose.PoseLandmark.LEFT_HIP],
             normalized_points[self.mp_pose.PoseLandmark.LEFT_KNEE],
             normalized_points[self.mp_pose.PoseLandmark.LEFT_ANKLE]
         )
-        
-        # Right knee angle
         angles['right_knee'] = self.calculate_3d_angle(
             normalized_points[self.mp_pose.PoseLandmark.RIGHT_HIP],
             normalized_points[self.mp_pose.PoseLandmark.RIGHT_KNEE],
@@ -127,15 +133,61 @@ class ExerciseAnalyzer:
             normalized_points[self.mp_pose.PoseLandmark.LEFT_HIP],
             normalized_points[self.mp_pose.PoseLandmark.LEFT_KNEE]
         )
-        
         angles['right_hip'] = self.calculate_3d_angle(
             normalized_points[self.mp_pose.PoseLandmark.RIGHT_SHOULDER],
             normalized_points[self.mp_pose.PoseLandmark.RIGHT_HIP],
             normalized_points[self.mp_pose.PoseLandmark.RIGHT_KNEE]
         )
         
+        # Ankle angles
+        angles['left_ankle'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_KNEE],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_ANKLE],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_FOOT_INDEX]
+        )
+        angles['right_ankle'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_KNEE],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_ANKLE],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_FOOT_INDEX]
+        )
+        
+        # Shoulder angles
+        angles['left_shoulder'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_HIP],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_SHOULDER],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_ELBOW]
+        )
+        angles['right_shoulder'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_HIP],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_SHOULDER],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_ELBOW]
+        )
+        
+        # Elbow angles
+        angles['left_elbow'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_SHOULDER],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_ELBOW],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_WRIST]
+        )
+        angles['right_elbow'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_SHOULDER],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_ELBOW],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_WRIST]
+        )
+        
+        # Wrist angles
+        angles['left_wrist'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_ELBOW],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_WRIST],
+            normalized_points[self.mp_pose.PoseLandmark.LEFT_THUMB]
+        )
+        angles['right_wrist'] = self.calculate_3d_angle(
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_ELBOW],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_WRIST],
+            normalized_points[self.mp_pose.PoseLandmark.RIGHT_THUMB]
+        )
+        
         return angles
-
 class SquatAnalyzer(ExerciseAnalyzer):
     """Analyzer specific to squat exercises with improved exercise detection and rep counting"""
     def __init__(self):
