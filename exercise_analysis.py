@@ -16,7 +16,7 @@ class ExerciseAnalyzer:
         self.prev_world_landmarks = None
         self.prev_velocities = {}
 
-        # --- NEW: Define all landmarks we want to track ---
+        # --- Define all landmarks we want to track ---
         self.tracked_landmarks = [
             mp.solutions.pose.PoseLandmark.LEFT_SHOULDER,
             mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER,
@@ -53,7 +53,6 @@ class ExerciseAnalyzer:
         """Calculate all relevant joint angles from world landmarks."""
         points = {lm: self.get_3d_point(world_landmarks.landmark[lm]) for lm in self.tracked_landmarks}
         angles = {}
-
         # Knees
         angles['left_knee'] = self.calculate_3d_angle(points[self.mp_pose.PoseLandmark.LEFT_HIP], points[self.mp_pose.PoseLandmark.LEFT_KNEE], points[self.mp_pose.PoseLandmark.LEFT_ANKLE])
         angles['right_knee'] = self.calculate_3d_angle(points[self.mp_pose.PoseLandmark.RIGHT_HIP], points[self.mp_pose.PoseLandmark.RIGHT_KNEE], points[self.mp_pose.PoseLandmark.RIGHT_ANKLE])
@@ -72,37 +71,28 @@ class ExerciseAnalyzer:
         # Wrists
         angles['left_wrist'] = self.calculate_3d_angle(points[self.mp_pose.PoseLandmark.LEFT_ELBOW], points[self.mp_pose.PoseLandmark.LEFT_WRIST], points[self.mp_pose.PoseLandmark.LEFT_THUMB])
         angles['right_wrist'] = self.calculate_3d_angle(points[self.mp_pose.PoseLandmark.RIGHT_ELBOW], points[self.mp_pose.PoseLandmark.RIGHT_WRIST], points[self.mp_pose.PoseLandmark.RIGHT_THUMB])
-
         return angles
 
     def calculate_kinetics(self, world_landmarks, fps: float) -> Tuple[Dict, Dict]:
         """Calculate real-world velocities and accelerations for all joints."""
         velocities = {}
         accelerations = {}
-
         if self.prev_world_landmarks:
             for lm in self.tracked_landmarks:
                 current_pos = self.get_3d_point(world_landmarks.landmark[lm])
                 prev_pos = self.get_3d_point(self.prev_world_landmarks.landmark[lm])
-
-                # Velocity in meters/second
                 velocity = (current_pos - prev_pos) * fps
                 velocities[lm.name] = velocity
-
-                # Acceleration in meters/second^2
                 if self.prev_velocities and lm.name in self.prev_velocities:
                     prev_velocity = self.prev_velocities[lm.name]
                     acceleration = (velocity - prev_velocity) * fps
                     accelerations[lm.name] = acceleration
-
         return velocities, accelerations
-
 
 class SquatAnalyzer(ExerciseAnalyzer):
     """Analyzer specific to squat exercises, adapted for world landmarks."""
     def __init__(self):
         super().__init__()
-        # ... (all your existing SquatAnalyzer __init__ variables remain the same)
         self.STANDING_KNEE_THRESHOLD = 150
         self.BOTTOM_KNEE_THRESHOLD = 100
         self.MIN_DEPTH_THRESHOLD = 110
@@ -143,14 +133,14 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.prev_hip_height = None
         self.prev_hip_velocity = 0
 
+    # **** THIS IS THE FIX ****
+    # Add the missing method back into the class
+    def set_user_weight(self, load_kg: float):
+        """Set the user's loaded weight for volume calculations"""
+        self.user_weight = load_kg
 
     def analyze_frame(self, pose_results, frame_idx: int, fps: float, frame) -> Optional[Dict]:
-        """
-        Analyze a single frame using world landmarks for kinetics and angles,
-        and image landmarks for drawing.
-        """
         if not pose_results.pose_world_landmarks or not pose_results.pose_landmarks:
-            # Update previous landmarks to None to avoid incorrect calculations on the next valid frame
             self.prev_world_landmarks = None
             self.prev_velocities = {}
             return None
@@ -158,34 +148,16 @@ class SquatAnalyzer(ExerciseAnalyzer):
         world_landmarks = pose_results.pose_world_landmarks
         image_landmarks = pose_results.pose_landmarks
 
-        # 1. Calculate All Joint Angles from world landmarks
         joint_angles = self.calculate_all_joint_angles(world_landmarks)
-
-        # 2. Calculate Kinetics (Velocity and Acceleration) from world landmarks
         velocities, accelerations = self.calculate_kinetics(world_landmarks, fps)
 
-        # --- Your existing squat analysis logic using the new data ---
-        avg_knee_angle = (joint_angles['left_knee'] + joint_angles['right_knee']) / 2
-        
-        # Use the Z coordinate from world landmarks for height (Y is up/down in world space)
-        left_hip_pos = self.get_3d_point(world_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
-        right_hip_pos = self.get_3d_point(world_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
-        hip_center_pos = (left_hip_pos + right_hip_pos) / 2
-        hip_height = hip_center_pos[1] # Y is vertical in world coordinates
+        # Your squat analysis logic will go here. For now, we are just returning the raw data.
+        # This part will need further adaptation.
 
-        # Get hip velocity from our new kinetics calculation
-        hip_velocity_vec = velocities.get('LEFT_HIP') # or average left and right
-        hip_velocity = hip_velocity_vec[1] if hip_velocity_vec is not None else 0
-
-        # ... (rest of your squat analysis logic like update_exercise_state, count_reps, etc.)
-        # This part will need careful adaptation to use the new detailed data.
-        # For now, we'll return the raw data for you to build upon.
-
-        # Update state for the next frame
         self.prev_world_landmarks = world_landmarks
         self.prev_velocities = velocities
 
-        # Draw the landmarks on the frame using image_landmarks
+        # Draw landmarks using image_landmarks for correct overlay
         self.draw_landmarks_with_state(frame, image_landmarks, self.exercise_state, {'rep_state': self.rep_state, 'current_reps': self.reps_completed})
 
         return {
@@ -196,7 +168,35 @@ class SquatAnalyzer(ExerciseAnalyzer):
             'accelerations': {name: acc.tolist() for name, acc in accelerations.items()}
         }
 
-    # ... (Keep your existing `reset_analysis`, `set_user_weight`, `detect_potential_squat_movement`,
-    # `update_exercise_state`, `count_reps`, `get_final_analysis`, `draw_landmarks_with_state`, etc.)
-    # You will need to adapt the logic inside these methods to use the new detailed
-    # `joint_angles`, `velocities`, and `accelerations` data.
+    # You will need to adapt the logic inside these methods to use the new detailed data
+    def draw_landmarks_with_state(self, frame, landmarks, exercise_state: str, rep_info: Dict):
+        """Draw landmarks with different colors based on exercise state"""
+        # (Your existing drawing logic here)
+        line_color = (128, 128, 128)
+        if exercise_state == "active":
+            line_color = (0, 255, 0)
+        
+        selected_connections = [
+            (self.mp_pose.PoseLandmark.LEFT_SHOULDER, self.mp_pose.PoseLandmark.LEFT_HIP),
+            (self.mp_pose.PoseLandmark.RIGHT_SHOULDER, self.mp_pose.PoseLandmark.RIGHT_HIP),
+            (self.mp_pose.PoseLandmark.LEFT_HIP, self.mp_pose.PoseLandmark.RIGHT_HIP),
+            (self.mp_pose.PoseLandmark.LEFT_HIP, self.mp_pose.PoseLandmark.LEFT_KNEE),
+            (self.mp_pose.PoseLandmark.RIGHT_HIP, self.mp_pose.PoseLandmark.RIGHT_KNEE),
+            (self.mp_pose.PoseLandmark.LEFT_KNEE, self.mp_pose.PoseLandmark.LEFT_ANKLE),
+            (self.mp_pose.PoseLandmark.RIGHT_KNEE, self.mp_pose.PoseLandmark.RIGHT_ANKLE)
+        ]
+
+        h, w = frame.shape[:2]
+        for connection in selected_connections:
+            start_idx, end_idx = connection
+            start_point = landmarks.landmark[start_idx]
+            end_point = landmarks.landmark[end_idx]
+            
+            start_pixel = (int(start_point.x * w), int(start_point.y * h))
+            end_pixel = (int(end_point.x * w), int(end_point.y * h))
+            
+            cv2.line(frame, start_pixel, end_pixel, line_color, 2)
+
+    def get_final_analysis(self) -> Dict:
+        # This method also needs to be adapted to process the new `frame_metrics` format
+        return {"status": "success", "metrics": self.frame_metrics}
