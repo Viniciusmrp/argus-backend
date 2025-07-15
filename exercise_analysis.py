@@ -542,6 +542,10 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 'time': frame_idx / fps
             }
             
+            # Add all individual joint angles to frame_data with descriptive names
+            for joint, angle in angles.items():
+                frame_data[f"{joint}_angle"] = angle
+            
             self.frame_metrics.append(frame_data)
             self.concentric_phase = is_concentric
         
@@ -557,7 +561,8 @@ class SquatAnalyzer(ExerciseAnalyzer):
             'exercise_state': exercise_state,
             'is_analyzing': self.is_analyzing,
             'rep_info': rep_info,
-            'avg_knee_angle': avg_knee_angle
+            'avg_knee_angle': avg_knee_angle,
+            'angles': angles # Return all angles for potential debugging or other uses
         }
 
     def draw_landmarks_with_state(self, frame, landmarks, exercise_state: str, rep_info: Dict):
@@ -612,9 +617,8 @@ class SquatAnalyzer(ExerciseAnalyzer):
         # Create time series data only from analysis periods
         time_series = []
         for frame in sorted(self.frame_metrics, key=lambda x: x['time']):
-            time_series.append({
+            frame_data = {
                 'time': float(frame['time']),
-                'angle': float(frame['avg_knee_angle']),
                 'hip_height': float(frame['hip_height']),
                 'hip_velocity': float(frame['hip_velocity']),
                 'hip_acceleration': float(frame['hip_acceleration']),
@@ -624,7 +628,14 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 'exercise_state': frame['exercise_state'],
                 'rep_state': frame['rep_state'],
                 'current_reps': int(frame['current_reps'])
-            })
+            }
+
+        # Dynamically add all angle values to the time_series
+        for key, value in frame.items():
+            if key.endswith('_angle'):
+                frame_data[key] = float(value)
+
+        time_series.append(frame_data)
         
         # Calculate volume over time
         volume_over_time = []
