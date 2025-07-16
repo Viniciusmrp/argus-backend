@@ -630,12 +630,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 'current_reps': int(frame['current_reps'])
             }
 
-        # Dynamically add all angle values to the time_series
-        for key, value in frame.items():
-            if key.endswith('_angle'):
-                frame_data[key] = float(value)
+            # Dynamically add all angle values to the time_series
+            for key, value in frame.items():
+                if key.endswith('_angle'):
+                    frame_data[key] = float(value)
 
-        time_series.append(frame_data)
+            time_series.append(frame_data)
         
         # Calculate volume over time
         volume_over_time = []
