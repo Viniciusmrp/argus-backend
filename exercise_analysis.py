@@ -472,7 +472,11 @@ class SquatAnalyzer(ExerciseAnalyzer):
         # Calculate averages
         avg_knee_angle = (angles['left_knee'] + angles['right_knee']) / 2
         avg_hip_angle = (angles['left_hip'] + angles['right_hip']) / 2
-        
+        avg_ankle_angle = (angles['left_ankle'] + angles['right_ankle']) / 2
+        avg_shoulder_angle = (angles['left_shoulder'] + angles['right_shoulder']) / 2
+        avg_elbow_angle = (angles['left_elbow'] + angles['right_elbow']) / 2
+        avg_wrist_angle = (angles['left_wrist'] + angles['right_wrist']) / 2
+            
         # Calculate hip center position
         left_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
         right_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
@@ -528,6 +532,10 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 'frame_idx': frame_idx,
                 'avg_knee_angle': avg_knee_angle,
                 'avg_hip_angle': avg_hip_angle,
+                'avg_ankle_angle': avg_ankle_angle,
+                'avg_shoulder_angle': avg_shoulder_angle,
+                'avg_elbow_angle': avg_elbow_angle,
+                'avg_wrist_angle': avg_wrist_angle,
                 'hip_height': hip_height,
                 'hip_velocity': hip_velocity,
                 'hip_acceleration': hip_acceleration,
