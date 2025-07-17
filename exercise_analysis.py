@@ -103,12 +103,16 @@ class ExerciseAnalyzer:
         
         return angle
 
-    def calculate_velocity(self, current_pos: float, prev_pos: float, fps: float) -> float:
-        """Calculate velocity between two positions"""
+    def calculate_velocity(self, current_pos: np.ndarray, prev_pos: np.ndarray, fps: float) -> np.ndarray:
+        """Calculate velocity between two 3D positions"""
+        if current_pos is None or prev_pos is None:
+            return np.array([0, 0, 0])
         return (current_pos - prev_pos) * fps
 
-    def calculate_acceleration(self, current_vel: float, prev_vel: float, fps: float) -> float:
-        """Calculate acceleration between two velocities"""
+    def calculate_acceleration(self, current_vel: np.ndarray, prev_vel: np.ndarray, fps: float) -> np.ndarray:
+        """Calculate acceleration between two 3D velocities"""
+        if current_vel is None or prev_vel is None:
+            return np.array([0, 0, 0])
         return (current_vel - prev_vel) * fps
 
     def calculate_joint_angles(self, normalized_points: Dict[str, np.ndarray]) -> Dict[str, float]:
@@ -244,9 +248,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.concentric_phase = False
         self.standing_confirmation_frames = 0
         
+        # Previous state variables for world landmarks
+        self.prev_world_landmarks = None
+        self.prev_world_velocities = None
+        
         # Previous state variables
         self.prev_knee_angle = None
-        self.prev_velocity = None
         self.prev_hip_height = None
         self.prev_hip_velocity = 0
         
@@ -283,10 +290,13 @@ class SquatAnalyzer(ExerciseAnalyzer):
         self.max_acceleration = 0
         self.avg_acceleration = []
         self.prev_knee_angle = None
-        self.prev_velocity = None
         self.prev_hip_height = None
         self.prev_hip_velocity = 0
         self.concentric_phase = False
+        
+        # Reset world landmark tracking
+        self.prev_world_landmarks = None
+        self.prev_world_velocities = None
         
     def set_user_weight(self, load_kg: float):
         """Set the user's loaded weight for volume calculations"""
@@ -458,9 +468,9 @@ class SquatAnalyzer(ExerciseAnalyzer):
             return False
         return hip_height > self.prev_hip_height
             
-    def analyze_frame(self, landmarks, frame_idx: int, fps: float, frame) -> Dict:
+    def analyze_frame(self, landmarks, world_landmarks, frame_idx: int, fps: float, frame) -> Dict:
         """Analyze a single frame using normalized 3D pose"""
-        if not landmarks:
+        if not landmarks or not world_landmarks:
             return None
             
         # Get normalized pose points
@@ -471,56 +481,79 @@ class SquatAnalyzer(ExerciseAnalyzer):
         
         # Calculate averages
         avg_knee_angle = (angles['left_knee'] + angles['right_knee']) / 2
-        avg_hip_angle = (angles['left_hip'] + angles['right_hip']) / 2
-        avg_ankle_angle = (angles['left_ankle'] + angles['right_ankle']) / 2
-        avg_shoulder_angle = (angles['left_shoulder'] + angles['right_shoulder']) / 2
-        avg_elbow_angle = (angles['left_elbow'] + angles['right_elbow']) / 2
-        avg_wrist_angle = (angles['left_wrist'] + angles['right_wrist']) / 2
-            
-        # Calculate hip center position
-        left_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
-        right_hip = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
-        hip_center = (left_hip + right_hip) / 2
-        hip_height = hip_center[1]
+        
+        # Calculate hip center from normalized landmarks for state detection
+        left_hip_norm = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
+        right_hip_norm = self.get_3d_point(landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
+        hip_center_norm = (left_hip_norm + right_hip_norm) / 2
+        hip_height_norm = hip_center_norm[1]
 
-        # Calculate hip velocity
-        hip_velocity = 0
-        if self.prev_hip_height is not None:
-            hip_velocity = (hip_height - self.prev_hip_height) * fps
+        # Calculate hip center from world landmarks for rep counting and metrics
+        left_hip_world = self.get_3d_point(world_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP])
+        right_hip_world = self.get_3d_point(world_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])
+        hip_center_world = (left_hip_world + right_hip_world) / 2
+        hip_height_world = hip_center_world[1]
+
+        # Calculate world velocities and accelerations for all joints
+        world_velocities = {}
+        world_accelerations = {}
+        
+        if self.prev_world_landmarks:
+            for landmark_idx in self.mp_pose.PoseLandmark:
+                current_pos = self.get_3d_point(world_landmarks.landmark[landmark_idx])
+                prev_pos = self.get_3d_point(self.prev_world_landmarks.landmark[landmark_idx])
+                
+                velocity = self.calculate_velocity(current_pos, prev_pos, fps)
+                world_velocities[landmark_idx] = velocity
+                
+                if self.prev_world_velocities:
+                    prev_velocity = self.prev_world_velocities.get(landmark_idx)
+                    acceleration = self.calculate_acceleration(velocity, prev_velocity, fps)
+                    world_accelerations[landmark_idx] = acceleration
+
+        # Get hip velocity for rep counting (using world landmarks)
+        hip_velocity_world = 0
+        if self.prev_world_landmarks:
+            prev_hip_center_world = (self.get_3d_point(self.prev_world_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP]) + 
+                                     self.get_3d_point(self.prev_world_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])) / 2
+            hip_velocity_world = self.calculate_velocity(hip_center_world, prev_hip_center_world, fps)[1] # Using Y-axis velocity
         
         # Update exercise state
-        exercise_state = self.update_exercise_state(avg_knee_angle, hip_height, frame_idx)
+        exercise_state = self.update_exercise_state(avg_knee_angle, hip_height_norm, frame_idx)
         
         # Count reps (only during active exercise)
-        rep_info = self.count_reps(hip_height, hip_velocity, frame_idx, fps)
+        rep_info = self.count_reps(hip_height_world, hip_velocity_world, frame_idx, fps)
         
         # Only perform detailed analysis when exercise is active
         intensity_value = 0
-        hip_acceleration = 0
         frame_volume = 0
         
         if self.is_analyzing:
             # Detect movement phase
-            is_concentric = self.detect_movement_phase(hip_height)
+            is_concentric = self.detect_movement_phase(hip_height_world)
             
-            # Calculate hip acceleration
-            if self.prev_hip_velocity is not None:
-                hip_acceleration = (hip_velocity - self.prev_hip_velocity) * fps
+            # Calculate hip acceleration magnitude for intensity
+            hip_acceleration = np.array([0, 0, 0])
+            if world_accelerations:
+                 left_hip_acc = world_accelerations.get(self.mp_pose.PoseLandmark.LEFT_HIP, np.array([0,0,0]))
+                 right_hip_acc = world_accelerations.get(self.mp_pose.PoseLandmark.RIGHT_HIP, np.array([0,0,0]))
+                 hip_acceleration = (left_hip_acc + right_hip_acc) / 2
+                 hip_acceleration_magnitude = np.linalg.norm(hip_acceleration)
                 
-                if is_concentric:
-                    intensity_value = abs(hip_acceleration)
-                else:
-                    intensity_value = 1.0 / (1.0 + abs(hip_acceleration))
+                 if is_concentric:
+                    intensity_value = hip_acceleration_magnitude
+                 else:
+                    intensity_value = 1.0 / (1.0 + hip_acceleration_magnitude)
                 
-                self.avg_acceleration.append(intensity_value)
-                self.max_acceleration = max(self.max_acceleration, intensity_value)
-            
+                 self.avg_acceleration.append(intensity_value)
+                 self.max_acceleration = max(self.max_acceleration, intensity_value)
+
             # Calculate volume only in concentric phase during active exercise
             if is_concentric and self.prev_hip_height is not None and self.user_weight > 0:
-                vertical_distance = abs(self.prev_hip_height - hip_height)
+                vertical_distance = abs(self.prev_hip_height - hip_height_world)
                 frame_volume = vertical_distance * self.user_weight
                 self.total_volume += frame_volume
-            
+
             # Track accumulated volume over time
             self.accumulated_volume_over_time.append({
                 'time': frame_idx / fps,
@@ -530,15 +563,9 @@ class SquatAnalyzer(ExerciseAnalyzer):
             # Store frame data only during analysis
             frame_data = {
                 'frame_idx': frame_idx,
-                'avg_knee_angle': avg_knee_angle,
-                'avg_hip_angle': avg_hip_angle,
-                'avg_ankle_angle': avg_ankle_angle,
-                'avg_shoulder_angle': avg_shoulder_angle,
-                'avg_elbow_angle': avg_elbow_angle,
-                'avg_wrist_angle': avg_wrist_angle,
-                'hip_height': hip_height,
-                'hip_velocity': hip_velocity,
-                'hip_acceleration': hip_acceleration,
+                'hip_height': hip_height_world,
+                'hip_velocity': hip_velocity_world,
+                'hip_acceleration': np.linalg.norm(hip_acceleration) if 'hip_acceleration' in locals() else 0,
                 'is_concentric': is_concentric,
                 'phase_intensity': intensity_value,
                 'frame_volume': frame_volume,
@@ -553,15 +580,23 @@ class SquatAnalyzer(ExerciseAnalyzer):
             # Add all individual joint angles to frame_data with descriptive names
             for joint, angle in angles.items():
                 frame_data[f"{joint}_angle"] = angle
-            
+
+            # Add joint velocities and accelerations
+            for joint_name, joint_idx in self.mp_pose.PoseLandmark.__members__.items():
+                if joint_idx in world_velocities:
+                    frame_data[f"{joint_name.lower()}_velocity"] = np.linalg.norm(world_velocities[joint_idx])
+                if joint_idx in world_accelerations:
+                    frame_data[f"{joint_name.lower()}_acceleration"] = np.linalg.norm(world_accelerations[joint_idx])
+
             self.frame_metrics.append(frame_data)
             self.concentric_phase = is_concentric
         
         # Always update previous values
         self.prev_knee_angle = avg_knee_angle
-        self.prev_hip_height = hip_height
-        self.prev_hip_velocity = hip_velocity
-        
+        self.prev_hip_height = hip_height_world
+        self.prev_world_landmarks = world_landmarks
+        self.prev_world_velocities = world_velocities
+
         # Draw landmarks based on exercise state
         self.draw_landmarks_with_state(frame, landmarks, exercise_state, rep_info)
         
@@ -640,7 +675,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
             # Dynamically add all angle values to the time_series
             for key, value in frame.items():
-                if key.endswith('_angle'):
+                if key.endswith('_angle') or key.endswith('_velocity') or key.endswith('_acceleration'):
                     frame_data[key] = float(value)
 
             time_series.append(frame_data)

@@ -152,7 +152,7 @@ def convert_numpy_types(obj):
     elif isinstance(obj, dict):
         return {key: convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, list):
-        return [convert_numpy_types(item) for item in obj]
+        return [self.convert_numpy_types(item) for item in obj]
     else:
         return obj
 
@@ -254,12 +254,13 @@ def analyze_video(video_path, metadata, output_path):
 
             # Draw landmarks with 3D visualization - simplified to just show specific landmarks
             frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-            if results.pose_landmarks:
+            if results.pose_landmarks and results.pose_world_landmarks:
                 landmarks_detected += 1
                 
                 # Process frame with the exercise analyzer - this now draws only selected landmarks
                 frame_metrics = exercise_analyzer.analyze_frame(
                     results.pose_landmarks,
+                    results.pose_world_landmarks,
                     frame_count,
                     fps,
                     frame
