@@ -150,12 +150,14 @@ def convert_numpy_types(obj):
     elif isinstance(obj, np.bool_):
         return bool(obj)
     elif isinstance(obj, dict):
+        # CORRECTED LINE: Removed 'self.'
         return {key: convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, list):
-        return [self.convert_numpy_types(item) for item in obj]
+        # CORRECTED LINE: Removed 'self.'
+        return [convert_numpy_types(item) for item in obj]
     else:
         return obj
-
+    
 def analyze_video(video_path, metadata, output_path):
     """
     Analyze the video using MediaPipe's 3D pose estimation, draw landmarks, and save the analyzed video.
