@@ -150,14 +150,12 @@ def convert_numpy_types(obj):
     elif isinstance(obj, np.bool_):
         return bool(obj)
     elif isinstance(obj, dict):
-        # CORRECTED LINE: Removed 'self.'
         return {key: convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, list):
-        # CORRECTED LINE: Removed 'self.'
         return [convert_numpy_types(item) for item in obj]
     else:
         return obj
-    
+
 def analyze_video(video_path, metadata, output_path):
     """
     Analyze the video using MediaPipe's 3D pose estimation, draw landmarks, and save the analyzed video.
@@ -278,26 +276,41 @@ def analyze_video(video_path, metadata, output_path):
         # Get final analysis after processing all frames
         analysis_results = exercise_analyzer.get_final_analysis()
 
-        logging.info(f"Final analysis results: \n{json.dumps(analysis_results, indent=2)}")
-
-
-        # Extract video ID with logging
+        # Extract video ID
         original_video_name = metadata.get('videoName')
         video_id = original_video_name.split('.')[0] if original_video_name else video_path.split('/')[-1].split('.')[0]
-        logging.info(f"Original video name from metadata: {original_video_name}")
         logging.info(f"Using video ID for Firestore: {video_id}")
         
-        # Save analysis results to Firestore
+        # --- NEW FIRESTORE SAVING LOGIC ---
         try:
-            # Convert NumPy types to native Python types for Firestore compatibility
+            # 1. Convert all data types first
             firestore_compatible_results = convert_numpy_types(analysis_results)
-            db.collection("exerciseAnalysis").document(video_id).set(firestore_compatible_results)
-            logging.info(f"Successfully saved analysis results to Firestore with ID: {video_id}")
+
+            # 2. Separate the large time_series data from the main results
+            time_series_data = firestore_compatible_results.pop('time_series', [])
+            main_analysis_data = firestore_compatible_results
+
+            # 3. Save the main analysis data to the primary document
+            db.collection("exerciseAnalysis").document(video_id).set(main_analysis_data)
+            logging.info(f"Successfully saved main analysis results to Firestore with ID: {video_id}")
+
+            # 4. Batch and save the time_series data to a subcollection
+            batch = db.batch()
+            time_series_collection = db.collection("exerciseAnalysis").document(video_id).collection("timeSeriesData")
+            
+            # Chunk the time series data to stay under document size limits
+            chunk_size = 300 # Store 300 frames per document (approx 10 seconds of video)
+            for i in range(0, len(time_series_data), chunk_size):
+                chunk = time_series_data[i:i + chunk_size]
+                doc_ref = time_series_collection.document(f"chunk_{i // chunk_size}")
+                batch.set(doc_ref, {"data": chunk})
+            
+            batch.commit()
+            logging.info(f"Successfully saved {len(time_series_data)} time_series frames in chunks for video ID: {video_id}")
+
         except Exception as e:
             logging.error(f"Error saving to Firestore. Video ID: {video_id}, Error: {str(e)}")
             raise
-
-        logging.info(f"Exercise analysis completed. Results: {analysis_results}")
 
     finally:
         cap.release()
@@ -505,6 +518,15 @@ def get_exercise_analysis(video_id):
         if doc.exists:
             logging.info(f"Analysis found for video_id: {video_id}")
             analysis_data = doc.to_dict()
+            
+            # Now, fetch the time_series data from the subcollection
+            time_series_data = []
+            time_series_collection = db.collection("exerciseAnalysis").document(video_id).collection("timeSeriesData").stream()
+            for chunk_doc in time_series_collection:
+                time_series_data.extend(chunk_doc.to_dict().get("data", []))
+            
+            analysis_data['time_series'] = time_series_data
+            
             logging.info(f"Analysis data: {analysis_data}")
             return jsonify(analysis_data)
         else:
