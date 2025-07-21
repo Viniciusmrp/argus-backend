@@ -592,24 +592,16 @@ class SquatAnalyzer(ExerciseAnalyzer):
             for joint, angle in angles.items():
                 frame_data[f"{joint}_angle"] = angle
 
-            # Add joint velocities, accelerations, AND visibility
+            # Add joint velocities and accelerations
             for joint_name, joint_idx in self.mp_pose.PoseLandmark.__members__.items():
-                if joint_idx not in body_landmarks:
-                    continue
-                # Add velocity if it exists
                 if joint_idx in world_velocities:
                     frame_data[f"{joint_name.lower()}_velocity"] = np.linalg.norm(world_velocities[joint_idx])
-                # Add acceleration if it exists
                 if joint_idx in world_accelerations:
                     frame_data[f"{joint_name.lower()}_acceleration"] = np.linalg.norm(world_accelerations[joint_idx])
-                
-                # ** NEW: Add visibility score for each landmark **
-                if joint_idx in landmarks.landmark:
-                    frame_data[f"{joint_name.lower()}_visibility"] = landmarks.landmark[joint_idx].visibility
 
             self.frame_metrics.append(frame_data)
-            self.concentric_phase = is_concentric      
-              
+            self.concentric_phase = is_concentric
+        
         # Always update previous values
         self.prev_knee_angle = avg_knee_angle
         self.prev_hip_height = hip_height_world
