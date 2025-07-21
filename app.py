@@ -1,3 +1,5 @@
+# app.py
+
 import cv2
 import mediapipe as mp
 from google.cloud import storage, secretmanager
@@ -287,7 +289,7 @@ def analyze_video(video_path, metadata, output_path):
             firestore_compatible_results = convert_numpy_types(analysis_results)
 
             # 2. Separate the large time_series data from the main results
-            time_series_data = firestore_compatible_results.pop('time_series', [])
+            time_series_data = firestore_compatible_results.pop('time_series_data', {})
             main_analysis_data = firestore_compatible_results
 
             # 3. Save the main analysis data to the primary document
@@ -298,15 +300,16 @@ def analyze_video(video_path, metadata, output_path):
             batch = db.batch()
             time_series_collection = db.collection("exerciseAnalysis").document(video_id).collection("timeSeriesData")
             
+            kinematics_data = time_series_data.get('kinematics', [])
             # Chunk the time series data to stay under document size limits
             chunk_size = 300 # Store 300 frames per document (approx 10 seconds of video)
-            for i in range(0, len(time_series_data), chunk_size):
-                chunk = time_series_data[i:i + chunk_size]
+            for i in range(0, len(kinematics_data), chunk_size):
+                chunk = kinematics_data[i:i + chunk_size]
                 doc_ref = time_series_collection.document(f"chunk_{i // chunk_size}")
                 batch.set(doc_ref, {"data": chunk})
             
             batch.commit()
-            logging.info(f"Successfully saved {len(time_series_data)} time_series frames in chunks for video ID: {video_id}")
+            logging.info(f"Successfully saved {len(kinematics_data)} time_series frames in chunks for video ID: {video_id}")
 
         except Exception as e:
             logging.error(f"Error saving to Firestore. Video ID: {video_id}, Error: {str(e)}")
@@ -418,6 +421,7 @@ def process_video():
 
         event_data = request.get_json()
         if not event_data:
+            logging.error("Bad Request: No event data received")
             return "Bad Request: No event data received", 400
 
         # Extract event ID and check for duplicate processing
@@ -432,14 +436,16 @@ def process_video():
 
         bucket_name = event_data.get("bucket", "")
         video_name = event_data.get("name", "")
+        video_id = video_name.rsplit(".", 1)[0]
+        
+        log_extra = {"video_id": video_id, "bucket": bucket_name, "video_name": video_name}
 
         if not bucket_name or not video_name:
-            logging.error("Missing bucket or object name in Eventarc event.")
+            logging.error("Missing bucket or object name in Eventarc event.", extra=log_extra)
             return "Bad Request: Missing bucket or object name", 400
 
-        logging.info(f"Processing video from bucket: {bucket_name}, file: {video_name}")
+        logging.info(f"Processing video.", extra=log_extra)
 
-        video_id = video_name.rsplit(".", 1)[0]
         analyzed_video_name = f"{video_id}_analyzed.mp4"
 
         # Check if analyzed video already exists
@@ -448,13 +454,13 @@ def process_video():
         analyzed_blob = analyzed_bucket.blob(analyzed_video_name)
 
         if analyzed_blob.exists():
-            logging.info(f"Skipping already processed video: {analyzed_video_name}")
+            logging.info(f"Skipping already processed video: {analyzed_video_name}", extra=log_extra)
             return jsonify({"message": "Video already processed"}), 200
 
         # Fetch metadata
         metadata = fetch_metadata_from_firestore(video_id)
         if not metadata:
-            logging.error(f"No metadata found for video ID: {video_id}")
+            logging.error(f"No metadata found for video ID: {video_id}", extra=log_extra)
             return jsonify({"error": f"No metadata found for video ID: {video_id}"}), 200
 
         # Create temporary files
@@ -467,7 +473,7 @@ def process_video():
         try:
             # Download input video
             download_video_from_gcs(bucket_name, video_name, input_path)
-            logging.info("Video downloaded successfully")
+            logging.info("Video downloaded successfully", extra=log_extra)
 
             # Process video
             result = analyze_video(input_path, metadata, output_path)
@@ -477,6 +483,7 @@ def process_video():
             # Upload processed video
             upload_analyzed_video_to_gcs(output_path, analyzed_video_name)
             
+            logging.info("Video processed successfully", extra=log_extra)
             return jsonify({
                 "message": "Video processed successfully",
                 "analyzedVideo": analyzed_video_name
@@ -488,7 +495,7 @@ def process_video():
                 os.remove(input_path)
             if os.path.exists(output_path):
                 os.remove(output_path)
-            logging.info("Temporary files cleaned up")
+            logging.info("Temporary files cleaned up", extra=log_extra)
 
     except Exception as e:
         error_message = "Internal Server Error during video processing"
@@ -525,9 +532,9 @@ def get_exercise_analysis(video_id):
             for chunk_doc in time_series_collection:
                 time_series_data.extend(chunk_doc.to_dict().get("data", []))
             
-            analysis_data['time_series'] = time_series_data
+            analysis_data['time_series_data'] = {'kinematics': time_series_data}
             
-            logging.info(f"Analysis data: {analysis_data}")
+            logging.info(f"Analysis data: {json.dumps(analysis_data, indent=2)}")
             return jsonify(analysis_data)
         else:
             logging.warning(f"No analysis found for video_id: {video_id}")

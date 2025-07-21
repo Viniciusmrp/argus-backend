@@ -1,3 +1,5 @@
+# exercise_analysis.py
+
 import numpy as np
 import cv2
 import mediapipe as mp
@@ -498,8 +500,17 @@ class SquatAnalyzer(ExerciseAnalyzer):
         world_velocities = {}
         world_accelerations = {}
         
+        body_landmarks = [
+            self.mp_pose.PoseLandmark.LEFT_SHOULDER, self.mp_pose.PoseLandmark.RIGHT_SHOULDER,
+            self.mp_pose.PoseLandmark.LEFT_ELBOW, self.mp_pose.PoseLandmark.RIGHT_ELBOW,
+            self.mp_pose.PoseLandmark.LEFT_WRIST, self.mp_pose.PoseLandmark.RIGHT_WRIST,
+            self.mp_pose.PoseLandmark.LEFT_HIP, self.mp_pose.PoseLandmark.RIGHT_HIP,
+            self.mp_pose.PoseLandmark.LEFT_KNEE, self.mp_pose.PoseLandmark.RIGHT_KNEE,
+            self.mp_pose.PoseLandmark.LEFT_ANKLE, self.mp_pose.PoseLandmark.RIGHT_ANKLE,
+        ]
+
         if self.prev_world_landmarks:
-            for landmark_idx in self.mp_pose.PoseLandmark:
+            for landmark_idx in body_landmarks:
                 current_pos = self.get_3d_point(world_landmarks.landmark[landmark_idx])
                 prev_pos = self.get_3d_point(self.prev_world_landmarks.landmark[landmark_idx])
                 
@@ -583,6 +594,8 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
             # Add joint velocities, accelerations, AND visibility
             for joint_name, joint_idx in self.mp_pose.PoseLandmark.__members__.items():
+                if joint_idx not in body_landmarks:
+                    continue
                 # Add velocity if it exists
                 if joint_idx in world_velocities:
                     frame_data[f"{joint_name.lower()}_velocity"] = np.linalg.norm(world_velocities[joint_idx])
@@ -721,33 +734,35 @@ class SquatAnalyzer(ExerciseAnalyzer):
         if self.rep_details:
             total_rep_duration = sum(rep['duration'] for rep in self.rep_details)
             avg_rep_time = total_rep_duration / len(self.rep_details)
+        
+        time_efficiency = (self.total_tension_time / (self.frame_metrics[-1]['time'] - self.frame_metrics[0]['time'])) * 100 if self.frame_metrics and self.total_tension_time > 0 else 0
 
         analysis_results = {
-            'status': 'success',
-            'exercise_detection': {
-                'exercise_start_frame': self.exercise_start_frame,
-                'exercise_end_frame': self.exercise_end_frame,
-                'analysis_start_frame': self.analysis_start_frame,
-                'total_frames_analyzed': len(self.frame_metrics)
+            'scores': {
+                'overall': float(total_score),
+                'intensity': float(intensity_score),
+                'tut': float(tut_score),
+                'volume': float(volume_score),
             },
-            'rep_counting': {
-                'completed_reps': self.reps_completed,
-                'rep_details': self.rep_details
+            'reps': {
+                'total': self.reps_completed,
+                'avg_duration': float(avg_rep_time),
+                'details': self.rep_details
             },
             'metrics': {
-                'volume': float(self.total_volume),
-                'volume_unit': 'kg·m',
+                'time_under_tension': float(self.total_tension_time),
+                'time_efficiency': float(time_efficiency),
+                'total_volume': {
+                    'value': float(self.total_volume),
+                    'unit': 'kg·m'
+                },
                 'max_intensity': float(self.max_acceleration),
                 'avg_intensity': float(avg_intensity),
-                'time_under_tension': float(self.total_tension_time),
-                'avg_repetition_time': float(avg_rep_time),
-                'volume_score': float(volume_score),
-                'intensity_score': float(intensity_score),
-                'tut_score': float(tut_score),
-                'total_score': float(total_score)
             },
-            'time_series': time_series,
-            'volume_progression': volume_over_time
+            'time_series_data': {
+                'volume_progression': volume_over_time,
+                'kinematics': time_series
+            }
         }
         
         return self.convert_numpy_types(analysis_results)
