@@ -190,6 +190,8 @@ def analyze_video(video_path, metadata, output_path):
     mp_drawing_styles = mp.solutions.drawing_styles
     
     pose = mp_pose.Pose(
+        min_detection_confidence=0.9,
+        min_tracking_confidence=0.9,
         model_complexity=2,  # Use the most accurate model
         enable_segmentation=False,
         smooth_landmarks=True
