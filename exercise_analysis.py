@@ -16,7 +16,7 @@ class ExerciseAnalyzer:
 
     def get_3d_point(self, landmark) -> np.ndarray:
         """Convert MediaPipe landmark to 3D numpy array"""
-        return np.array([landmark.x, landmark.y, landmark.z])
+        return np.array([landmark.x, landmark.y, landmark.z, landmark.visibility, landmark.presence])
 
     def get_body_coordinate_system(self, landmarks) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Calculates a coordinate system based on the person's body orientation. Returns three orthogonal vectors representing the new Y, Z, and X axes."""
@@ -592,12 +592,19 @@ class SquatAnalyzer(ExerciseAnalyzer):
             for joint, angle in angles.items():
                 frame_data[f"{joint}_angle"] = angle
 
-            # Add joint velocities and accelerations
+            # Add joint positions, visibility, and confidence
             for joint_name, joint_idx in self.mp_pose.PoseLandmark.__members__.items():
                 if joint_idx in world_velocities:
                     frame_data[f"{joint_name.lower()}_velocity"] = np.linalg.norm(world_velocities[joint_idx])
                 if joint_idx in world_accelerations:
                     frame_data[f"{joint_name.lower()}_acceleration"] = np.linalg.norm(world_accelerations[joint_idx])
+                
+                # Add position, visibility, and confidence for each landmark
+                landmark_data = landmarks.landmark[joint_idx]
+                frame_data[f"{joint_name.lower()}_position"] = [landmark_data.x, landmark_data.y, landmark_data.z]
+                frame_data[f"{joint_name.lower()}_visibility"] = landmark_data.visibility
+                frame_data[f"{joint_name.lower()}_confidence"] = landmark_data.presence
+
 
             self.frame_metrics.append(frame_data)
             self.concentric_phase = is_concentric
