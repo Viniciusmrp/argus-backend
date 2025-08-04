@@ -599,6 +599,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 if joint_idx in world_accelerations:
                     frame_data[f"{joint_name.lower()}_acceleration"] = np.linalg.norm(world_accelerations[joint_idx])
 
+                # Add position, visibility, and confidence for each landmark
+                landmark_data = landmarks.landmark[joint_idx]
+                frame_data[f"{joint_name.lower()}_position"] = [landmark_data.x, landmark_data.y, landmark_data.z]
+                frame_data[f"{joint_name.lower()}_visibility"] = landmark_data.visibility
+                frame_data[f"{joint_name.lower()}_confidence"] = landmark_data.presence
+
             self.frame_metrics.append(frame_data)
             self.concentric_phase = is_concentric
         
