@@ -599,10 +599,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 if joint_idx in world_accelerations:
                     frame_data[f"{joint_name.lower()}_acceleration"] = np.linalg.norm(world_accelerations[joint_idx])
 
-                world_landmark_data = world_landmarks.landmark[joint_idx]
                 normalized_landmark_data = landmarks.landmark[joint_idx]
-
-                frame_data[f"{joint_name.lower()}_position"] = [world_landmark_data.x, world_landmark_data.y, world_landmark_data.z]
                 frame_data[f"{joint_name.lower()}_visibility"] = normalized_landmark_data.visibility
                 frame_data[f"{joint_name.lower()}_confidence"] = normalized_landmark_data.presence
 
@@ -693,7 +690,7 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
             # Dynamically add all angle values to the time_series
             for key, value in frame.items():
-                if key.endswith(('_angle', '_velocity', '_acceleration', '_position', '_visibility', '_confidence')):
+                if key.endswith(('_angle', '_velocity', '_acceleration', '_visibility', '_confidence')):
                     frame_data[key] = self.convert_numpy_types(value)
 
             time_series.append(frame_data)
