@@ -599,11 +599,12 @@ class SquatAnalyzer(ExerciseAnalyzer):
                 if joint_idx in world_accelerations:
                     frame_data[f"{joint_name.lower()}_acceleration"] = np.linalg.norm(world_accelerations[joint_idx])
 
-                # Add position, visibility, and confidence for each landmark
-                landmark_data = landmarks.landmark[joint_idx]
-                frame_data[f"{joint_name.lower()}_position"] = [landmark_data.x, landmark_data.y, landmark_data.z]
-                frame_data[f"{joint_name.lower()}_visibility"] = landmark_data.visibility
-                frame_data[f"{joint_name.lower()}_confidence"] = landmark_data.presence
+                world_landmark_data = world_landmarks.landmark[joint_idx]
+                normalized_landmark_data = landmarks.landmark[joint_idx]
+
+                frame_data[f"{joint_name.lower()}_position"] = [world_landmark_data.x, world_landmark_data.y, world_landmark_data.z]
+                frame_data[f"{joint_name.lower()}_visibility"] = normalized_landmark_data.visibility
+                frame_data[f"{joint_name.lower()}_confidence"] = normalized_landmark_data.presence
 
             self.frame_metrics.append(frame_data)
             self.concentric_phase = is_concentric
@@ -692,8 +693,8 @@ class SquatAnalyzer(ExerciseAnalyzer):
 
             # Dynamically add all angle values to the time_series
             for key, value in frame.items():
-                if key.endswith('_angle') or key.endswith('_velocity') or key.endswith('_acceleration'):
-                    frame_data[key] = float(value)
+                if key.endswith(('_angle', '_velocity', '_acceleration', '_position', '_visibility', '_confidence')):
+                    frame_data[key] = self.convert_numpy_types(value)
 
             time_series.append(frame_data)
         
