@@ -336,7 +336,7 @@ def analyze_video(video_path, metadata, output_path):
         result = subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
         logging.info("Successfully transcoded video with ffmpeg")
         
-        if os..path.exists(temp_output):
+        if os.path.exists(temp_output):
             os.remove(temp_output)
             
     except Exception as e:
