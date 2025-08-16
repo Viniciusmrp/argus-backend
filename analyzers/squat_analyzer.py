@@ -3,6 +3,7 @@ import logging
 import cv2
 import numpy as np
 from analyzers.base_analyzer import BaseAnalyzer
+from typing import Dict
 
 class SquatAnalyzer(BaseAnalyzer):
     """Analyzer specific to squat exercises with improved exercise detection and rep counting"""
