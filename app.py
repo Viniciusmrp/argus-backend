@@ -1,5 +1,5 @@
 # app.py
-
+print("Starting application")
 import cv2
 import mediapipe as mp
 from google.cloud import storage, secretmanager
@@ -431,7 +431,6 @@ def process_video():
             if doc.exists:
                 logging.info(f"Event {event_id} already processed, skipping")
                 return jsonify({"message": "Event already processed"}), 200
-            doc_ref.set({"processed_at": datetime.datetime.utcnow().isoformat()})
 
         bucket_name = event_data.get("bucket", "")
         video_name = event_data.get("name", "")
@@ -482,6 +481,12 @@ def process_video():
             # Upload processed video
             upload_analyzed_video_to_gcs(output_path, analyzed_video_name)
             
+            # Mark event as processed only after successful completion
+            if event_id:
+                db.collection("processed_events").document(event_id).set({
+                    "processed_at": datetime.datetime.utcnow().isoformat()
+                })
+
             logging.info("Video processed successfully", extra=log_extra)
             return jsonify({
                 "message": "Video processed successfully",
