@@ -15,7 +15,7 @@ import subprocess
 import firebase_admin
 from firebase_admin import credentials, firestore
 import json
-from exercise_analysis import SquatAnalyzer
+from analyzers.analyzer_factory import get_analyzer
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -165,7 +165,8 @@ def analyze_video(video_path, metadata, output_path):
     logging.info(f"Analyzing video: {video_path} with metadata: {metadata}")
 
     # Initialize exercise analyzer
-    exercise_analyzer = SquatAnalyzer()
+    exercise_type = metadata.get('exercise', 'squat')
+    exercise_analyzer = get_analyzer(exercise_type)
     
     # Set user weight from metadata if available
     user_load = metadata.get('load')
@@ -335,7 +336,7 @@ def analyze_video(video_path, metadata, output_path):
         result = subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
         logging.info("Successfully transcoded video with ffmpeg")
         
-        if os.path.exists(temp_output):
+        if os..path.exists(temp_output):
             os.remove(temp_output)
             
     except Exception as e:
@@ -565,6 +566,7 @@ def save_video_info():
             "load": data.get("load"),
             "videoName": video_name,
             "isPortrait": data.get("isPortrait", False),  # Add this line
+            "exercise": data.get("exercise"),
             "uploadedAt": datetime.datetime.utcnow().isoformat(),
         })
 
