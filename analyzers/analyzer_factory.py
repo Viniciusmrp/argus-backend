@@ -4,10 +4,12 @@ def get_analyzer(exercise_type: str):
     """
     Factory function to get an analyzer based on exercise type.
     """
-    if exercise_type == "squat":
+    normalized_exercise = exercise_type.lower()
+
+    if normalized_exercise in ["squat", "back squat"]:
         return SquatAnalyzer()
     # Add other exercises here
-    # elif exercise_type == "deadlift":
+    # elif normalized_exercise == "deadlift":
     #     return DeadliftAnalyzer()
     else:
         raise ValueError(f"Unknown exercise type: {exercise_type}")
