@@ -162,7 +162,7 @@ class SquatAnalyzer(BaseAnalyzer):
         if self.exercise_state == "inactive":
             if activity_ratio > 0.2:  # 20% of recent frames show exercise-like movement
                 self.consecutive_active_frames += 1
-                if self.consecutive_active_frames >= self.MIN_CONsecutive_ACTIVE_FRAMES:
+                if self.consecutive_active_frames >= self.MIN_CONSECUTIVE_ACTIVE_FRAMES:
                     self.exercise_state = "starting"
                     self.exercise_start_frame = frame_idx
                     logging.info(f"Exercise starting detected at frame {frame_idx}")
@@ -186,7 +186,7 @@ class SquatAnalyzer(BaseAnalyzer):
         elif self.exercise_state == "active":
             if activity_ratio < 0.3:  # Low activity suggests exercise ending
                 self.consecutive_inactive_frames += 1
-                if self.consecutive_inactive_frames >= self.MIN_CONsecutive_INACTIVE_FRAMES:
+                if self.consecutive_inactive_frames >= self.MIN_CONSECUTIVE_INACTIVE_FRAMES:
                     self.exercise_state = "ending"
             else:
                 self.consecutive_inactive_frames = 0
