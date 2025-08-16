@@ -13,7 +13,6 @@ class SquatAnalyzer(BaseAnalyzer):
         # Enhanced thresholds for better detection
         self.STANDING_KNEE_THRESHOLD = 150  # Minimum angle to be considered standing
         self.BOTTOM_KNEE_THRESHOLD = 100    # Maximum angle to be considered in bottom position
-        self.MIN_DEPTH_THRESHOLD = 110      # Minimum depth required for a valid rep
         
         # Exercise state detection parameters
         self.EXERCISE_DETECTION_WINDOW = 20  # frames to confirm exercise state
@@ -214,13 +213,9 @@ class SquatAnalyzer(BaseAnalyzer):
             'current_reps': self.reps_completed
         }
 
-        # The check 'if not self.is_analyzing:' has been removed to ensure
-        # the counter runs from the very first frame.
-
         current_time = frame_idx / fps
 
         if self.rep_state == "standing":
-            # Check for start of descent (consistent downward hip movement)
             if hip_velocity < -0.05:
                 self.rep_state = "descending"
                 self.current_rep_start_frame = frame_idx
@@ -230,23 +225,24 @@ class SquatAnalyzer(BaseAnalyzer):
                 logging.info(f"Rep descent started at frame {frame_idx}")
 
         elif self.rep_state == "descending":
-            # Check for bottom of squat (hip velocity changes from negative to positive)
             if hip_velocity >= 0:
                 self.rep_state = "ascending"
                 logging.info(f"Bottom position reached at frame {frame_idx}")
 
         elif self.rep_state == "ascending":
-            # Check if user has returned to the top and stopped moving
-            is_at_top = hip_height >= self.start_hip_height * 0.98 if self.start_hip_height is not None else False
+            is_at_top = hip_height >= self.start_hip_height * 0.95 if self.start_hip_height is not None else False
             is_stopped = abs(hip_velocity) < 0.1
+            new_descent_started = hip_velocity < -0.05
 
             if is_at_top and is_stopped:
                 self.standing_confirmation_frames += 1
             else:
                 self.standing_confirmation_frames = 0
+            
+            rep_completed = (self.standing_confirmation_frames >= self.REP_CONFIRMATION_FRAMES) or \
+                            (is_at_top and new_descent_started)
 
-            # Confirm the rep only if the user is stable at the top for enough frames
-            if self.standing_confirmation_frames >= self.REP_CONFIRMATION_FRAMES:
+            if rep_completed:
                 rep_duration = current_time - self.current_rep_start_time if self.current_rep_start_time is not None else 0
 
                 if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
@@ -264,8 +260,14 @@ class SquatAnalyzer(BaseAnalyzer):
                     self.rep_details.append(rep_detail)
                     logging.info(f"Rep {self.reps_completed} completed in {rep_duration:.2f}s")
                 
-                # Transition to standing and reset for the next rep
-                self.rep_state = "standing"
+                if new_descent_started:
+                    self.rep_state = "descending"
+                    self.current_rep_start_frame = frame_idx
+                    self.current_rep_start_time = current_time
+                    self.start_hip_height = hip_height
+                else:
+                    self.rep_state = "standing"
+
                 self.standing_confirmation_frames = 0
                 
         rep_info.update({
