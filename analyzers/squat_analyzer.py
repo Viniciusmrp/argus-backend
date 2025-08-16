@@ -216,7 +216,7 @@ class SquatAnalyzer(BaseAnalyzer):
         current_time = frame_idx / fps
 
         if self.rep_state == "standing":
-            if hip_velocity < -0.05:
+            if hip_velocity < -0.001:
                 self.rep_state = "descending"
                 self.current_rep_start_frame = frame_idx
                 self.current_rep_start_time = current_time
@@ -231,8 +231,8 @@ class SquatAnalyzer(BaseAnalyzer):
 
         elif self.rep_state == "ascending":
             is_at_top = hip_height >= self.start_hip_height * 0.95 if self.start_hip_height is not None else False
-            is_stopped = abs(hip_velocity) < 0.1
-            new_descent_started = hip_velocity < -0.05
+            is_stopped = abs(hip_velocity) < 0.001
+            new_descent_started = hip_velocity < -0.001
 
             if is_at_top and is_stopped:
                 self.standing_confirmation_frames += 1
@@ -405,17 +405,6 @@ class SquatAnalyzer(BaseAnalyzer):
             for joint, angle in angles.items():
                 frame_data[f"{joint}_angle"] = angle
 
-            # Add joint velocities and accelerations
-            for joint_name, joint_idx in self.mp_pose.PoseLandmark.__members__.items():
-                if joint_idx in world_velocities:
-                    frame_data[f"{joint_name.lower()}_velocity"] = np.linalg.norm(world_velocities[joint_idx])
-                if joint_idx in world_accelerations:
-                    frame_data[f"{joint_name.lower()}_acceleration"] = np.linalg.norm(world_accelerations[joint_idx])
-
-                normalized_landmark_data = landmarks.landmark[joint_idx]
-                frame_data[f"{joint_name.lower()}_visibility"] = normalized_landmark_data.visibility
-                frame_data[f"{joint_name.lower()}_confidence"] = normalized_landmark_data.presence
-
             self.frame_metrics.append(frame_data)
             self.concentric_phase = is_concentric
         
@@ -503,7 +492,7 @@ class SquatAnalyzer(BaseAnalyzer):
 
             # Dynamically add all angle values to the time_series
             for key, value in frame.items():
-                if key.endswith(('_angle', '_velocity', '_acceleration', '_visibility', '_confidence')):
+                if key.endswith('_angle'):
                     frame_data[key] = self.convert_numpy_types(value)
 
             time_series.append(frame_data)
