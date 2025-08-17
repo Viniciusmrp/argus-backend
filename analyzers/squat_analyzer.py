@@ -28,6 +28,7 @@ class SquatAnalyzer(BaseAnalyzer):
         self.activity_window = deque(maxlen=self.EXERCISE_DETECTION_WINDOW)
         self.knee_angle_history = deque(maxlen=60)  # 2 seconds at 30fps
         self.hip_height_history = deque(maxlen=60)
+        self.hip_velocity_history = deque(maxlen=5)  # Smoothing window for velocity
         
         # Exercise state tracking
         self.exercise_state = "inactive"  # "inactive", "starting", "active", "ending"
@@ -75,6 +76,7 @@ class SquatAnalyzer(BaseAnalyzer):
         self.activity_window.clear()
         self.knee_angle_history.clear()
         self.hip_height_history.clear()
+        self.hip_velocity_history.clear()
         
         # Reset exercise state
         self.exercise_state = "inactive"
@@ -342,11 +344,14 @@ class SquatAnalyzer(BaseAnalyzer):
                                      self.get_3d_point(self.prev_world_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP])) / 2
             hip_velocity_world = self.calculate_velocity(hip_center_world, prev_hip_center_world, fps)[1] # Using Y-axis velocity
         
+        self.hip_velocity_history.append(hip_velocity_world)
+        smoothed_hip_velocity = np.mean(list(self.hip_velocity_history))
+        
         # Update exercise state
         exercise_state = self.update_exercise_state(avg_knee_angle, hip_height_norm, frame_idx)
         
         # Count reps (only during active exercise)
-        rep_info = self.count_reps(hip_height_world, hip_velocity_world, frame_idx, fps)
+        rep_info = self.count_reps(hip_height_world, smoothed_hip_velocity, frame_idx, fps)
         
         # Only perform detailed analysis when exercise is active
         intensity_value = 0
