@@ -2,7 +2,6 @@ from collections import deque
 import logging
 import cv2
 import numpy as np
-from scipy.signal import find_peaks
 from analyzers.base_analyzer import BaseAnalyzer
 from typing import Dict
 
@@ -21,13 +20,14 @@ class SquatAnalyzer(BaseAnalyzer):
         self.MIN_CONSECUTIVE_INACTIVE_FRAMES = 60  # minimum frames to confirm exercise end
         
         # Rep counting parameters
+        self.REP_CONFIRMATION_FRAMES = 3   # frames to confirm a rep transition
         self.MIN_REP_DURATION = 0.8         # minimum seconds for a valid rep
         self.MAX_REP_DURATION = 8.0         # maximum seconds for a valid rep
         
         # State tracking with sliding windows
         self.activity_window = deque(maxlen=self.EXERCISE_DETECTION_WINDOW)
         self.knee_angle_history = deque(maxlen=60)  # 2 seconds at 30fps
-        self.hip_height_history = []  # Use a list for rep counting
+        self.hip_height_history = deque(maxlen=10) # Use a deque for real-time trend analysis
         
         # Exercise state tracking
         self.exercise_state = "inactive"  # "inactive", "starting", "active", "ending"
@@ -37,6 +37,10 @@ class SquatAnalyzer(BaseAnalyzer):
         self.exercise_end_frame = None
         
         # Rep counting state machine
+        self.rep_state = "standing"  # "standing", "descending", "ascending"
+        self.current_rep_start_frame = None
+        self.current_rep_start_time = None
+        self.start_hip_height = None
         self.reps_completed = 0
         self.rep_details = []  # Store details about each rep
         
@@ -78,6 +82,10 @@ class SquatAnalyzer(BaseAnalyzer):
         self.exercise_end_frame = None
         
         # Reset rep counting
+        self.rep_state = "standing"
+        self.current_rep_start_frame = None
+        self.current_rep_start_time = None
+        self.start_hip_height = None
         self.reps_completed = 0
         self.rep_details = []
         
@@ -186,48 +194,59 @@ class SquatAnalyzer(BaseAnalyzer):
                 
         return self.exercise_state
     
-    def count_reps(self, fps: float) -> None:
+    def get_hip_height_trend(self) -> str:
         """
-        Counts repetitions by finding peaks and troughs in the hip height data.
-        A rep is counted as a sequence of peak -> trough -> peak.
+        Determines the trend of hip movement based on the history.
         """
-        if not self.hip_height_history or len(self.hip_height_history) < fps * self.MIN_REP_DURATION:
-            return
+        if len(self.hip_height_history) < 10:
+            return "stationary"
 
-        hip_height_np = np.array(self.hip_height_history)
-        
-        # Find peaks (top of the squat)
-        peaks, _ = find_peaks(hip_height_np, height=np.mean(hip_height_np), prominence=0.05, width=fps * 0.2, distance=fps * self.MIN_REP_DURATION)
-        
-        # Find troughs (bottom of the squat)
-        troughs, _ = find_peaks(-hip_height_np, prominence=0.05, width=fps * 0.2, distance=fps * self.MIN_REP_DURATION)
-        
-        if len(peaks) < 2 or len(troughs) == 0:
-            return
+        # Use linear regression to find the slope of the hip height over time
+        x = np.arange(len(self.hip_height_history))
+        y = np.array(self.hip_height_history)
+        slope, _ = np.polyfit(x, y, 1)
 
-        self.reps_completed = 0
-        self.rep_details = []
-        
-        last_peak_idx = 0
-        for i in range(len(peaks) - 1):
-            start_peak = peaks[i]
-            end_peak = peaks[i+1]
-            
-            # Find a trough between the two peaks
-            valid_troughs = [t for t in troughs if start_peak < t < end_peak]
-            
-            if valid_troughs:
-                self.reps_completed += 1
-                rep_detail = {
-                    'rep_number': self.reps_completed,
-                    'start_frame': int(start_peak),
-                    'end_frame': int(end_peak),
-                    'duration': (end_peak - start_peak) / fps,
-                    'start_time': start_peak / fps,
-                    'end_time': end_peak / fps
-                }
-                self.rep_details.append(rep_detail)
-                logging.info(f"Rep {self.reps_completed} completed in {rep_detail['duration']:.2f}s")
+        if abs(slope) < 0.001:
+            return "stationary"
+        elif slope > 0:
+            return "ascending"
+        else:
+            return "descending"
+
+    def count_reps(self, hip_height: float, frame_idx: int, fps: float) -> None:
+        """
+        Counts repetitions in real-time using a state machine driven by hip height trend.
+        """
+        current_time = frame_idx / fps
+        hip_trend = self.get_hip_height_trend()
+
+        if self.rep_state == "standing":
+            if hip_trend == "descending":
+                self.rep_state = "descending"
+                self.current_rep_start_frame = frame_idx
+                self.current_rep_start_time = current_time
+                self.start_hip_height = hip_height
+
+        elif self.rep_state == "descending":
+            if hip_trend == "ascending":
+                self.rep_state = "ascending"
+
+        elif self.rep_state == "ascending":
+            if hip_trend == "stationary" and hip_height >= self.start_hip_height * 0.95:
+                rep_duration = current_time - self.current_rep_start_time
+                if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
+                    self.reps_completed += 1
+                    rep_detail = {
+                        'rep_number': self.reps_completed,
+                        'start_frame': self.current_rep_start_frame,
+                        'end_frame': frame_idx,
+                        'duration': rep_duration,
+                        'start_time': self.current_rep_start_time,
+                        'end_time': current_time
+                    }
+                    self.rep_details.append(rep_detail)
+                    logging.info(f"Rep {self.reps_completed} completed in {rep_duration:.2f}s")
+                self.rep_state = "standing"
 
             
     def detect_movement_phase(self, hip_height: float) -> bool:
@@ -298,6 +317,9 @@ class SquatAnalyzer(BaseAnalyzer):
         
         # Update exercise state
         exercise_state = self.update_exercise_state(avg_knee_angle, hip_height_norm, frame_idx)
+        
+        # Count reps in real-time
+        self.count_reps(hip_height_world, frame_idx, fps)
         
         # Only perform detailed analysis when exercise is active
         intensity_value = 0
@@ -422,9 +444,6 @@ class SquatAnalyzer(BaseAnalyzer):
             
     def get_final_analysis(self) -> Dict:
         """Get the final analysis with enhanced rep counting and exercise detection"""
-        # Calculate reps one last time at the end of the video
-        self.count_reps(fps=30)  # Assuming 30 fps for the final count
-
         # Calculate metrics only from active exercise periods
         if self.is_analyzing and self.frame_metrics:
             last_frame = self.frame_metrics[-1]
