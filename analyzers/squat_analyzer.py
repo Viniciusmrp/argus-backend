@@ -232,7 +232,8 @@ class SquatAnalyzer(BaseAnalyzer):
                 self.rep_state = "ascending"
 
         elif self.rep_state == "ascending":
-            if hip_trend == "stationary" and hip_height >= self.start_hip_height * 0.95:
+            is_at_top = hip_height >= self.start_hip_height * 0.95 if self.start_hip_height is not None else False
+            if hip_trend == "descending" or (hip_trend == "stationary" and is_at_top):
                 rep_duration = current_time - self.current_rep_start_time
                 if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
                     self.reps_completed += 1
@@ -246,7 +247,14 @@ class SquatAnalyzer(BaseAnalyzer):
                     }
                     self.rep_details.append(rep_detail)
                     logging.info(f"Rep {self.reps_completed} completed in {rep_duration:.2f}s")
-                self.rep_state = "standing"
+                
+                if hip_trend == "descending":
+                    self.rep_state = "descending"
+                    self.current_rep_start_frame = frame_idx
+                    self.current_rep_start_time = current_time
+                    self.start_hip_height = hip_height
+                else:
+                    self.rep_state = "standing"
 
             
     def detect_movement_phase(self, hip_height: float) -> bool:
