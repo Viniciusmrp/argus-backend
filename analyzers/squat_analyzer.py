@@ -2,6 +2,7 @@ from collections import deque
 import logging
 import cv2
 import numpy as np
+from scipy.signal import savgol_filter
 from analyzers.base_analyzer import BaseAnalyzer
 from typing import Dict
 
@@ -173,12 +174,13 @@ class SquatAnalyzer(BaseAnalyzer):
                 current_pos = self.get_3d_point(world_landmarks.landmark[landmark_idx])
                 prev_pos = self.get_3d_point(self.prev_world_landmarks.landmark[landmark_idx])
                 velocity = self.calculate_velocity(current_pos, prev_pos, fps)
-                world_velocities[landmark_idx] = velocity
+                world_velocities[landmark_idx.name] = velocity
                 
                 if self.prev_world_velocities:
-                    prev_velocity = self.prev_world_velocities.get(landmark_idx)
-                    acceleration = self.calculate_acceleration(velocity, prev_velocity, fps)
-                    world_accelerations[landmark_idx] = acceleration
+                    prev_velocity = self.prev_world_velocities.get(landmark_idx.name)
+                    if prev_velocity is not None:
+                        acceleration = self.calculate_acceleration(velocity, prev_velocity, fps)
+                        world_accelerations[landmark_idx.name] = acceleration
         
         self.count_reps(avg_knee_angle, frame_idx, fps)
         
@@ -188,8 +190,8 @@ class SquatAnalyzer(BaseAnalyzer):
         frame_volume = 0
         hip_acceleration_magnitude = 0
         if world_accelerations:
-             left_hip_acc = world_accelerations.get(self.mp_pose.PoseLandmark.LEFT_HIP, np.array([0,0,0]))
-             right_hip_acc = world_accelerations.get(self.mp_pose.PoseLandmark.RIGHT_HIP, np.array([0,0,0]))
+             left_hip_acc = world_accelerations.get("LEFT_HIP", np.array([0,0,0]))
+             right_hip_acc = world_accelerations.get("RIGHT_HIP", np.array([0,0,0]))
              hip_acceleration = (left_hip_acc + right_hip_acc) / 2
              hip_acceleration_magnitude = np.linalg.norm(hip_acceleration)
             
@@ -227,6 +229,9 @@ class SquatAnalyzer(BaseAnalyzer):
         
         for joint, angle in angles.items():
             frame_data[f"{joint}_angle"] = angle
+        
+        frame_data['velocities'] = {name: np.linalg.norm(vel) for name, vel in world_velocities.items()}
+        frame_data['accelerations'] = {name: np.linalg.norm(acc) for name, acc in world_accelerations.items()}
 
         self.frame_metrics.append(frame_data)
         self.concentric_phase = is_concentric
@@ -238,13 +243,7 @@ class SquatAnalyzer(BaseAnalyzer):
 
         self.draw_landmarks_with_state(frame, landmarks, self.rep_state, {})
         
-        return {
-            'exercise_state': self.rep_state,
-            'is_analyzing': self.is_analyzing,
-            'rep_info': {'current_reps': self.reps_completed},
-            'avg_knee_angle': avg_knee_angle,
-            'angles': angles
-        }
+        return frame_data
 
     def draw_landmarks_with_state(self, frame, landmarks, rep_state: str, rep_info: Dict):
         """Draw landmarks with different colors based on rep state."""
@@ -281,6 +280,75 @@ class SquatAnalyzer(BaseAnalyzer):
             cv2.circle(frame, start_pixel, 4, point_color, -1)
             cv2.circle(frame, end_pixel, 4, point_color, -1)
 
+    def apply_smoothing(self, time_series):
+        """Applies Savitzky-Golay filter to time-series data."""
+        if not time_series:
+            return time_series
+
+        # First, find all possible keys by iterating through all frames
+        all_keys = set()
+        velocity_keys = set()
+        acceleration_keys = set()
+        for frame in time_series:
+            all_keys.update(frame.keys())
+            if 'velocities' in frame and isinstance(frame['velocities'], dict):
+                velocity_keys.update(frame['velocities'].keys())
+            if 'accelerations' in frame and isinstance(frame['accelerations'], dict):
+                acceleration_keys.update(frame['accelerations'].keys())
+
+        # Keys to smooth
+        keys_to_smooth = [k for k in all_keys if k not in ['frame_idx', 'time', 'is_concentric', 'is_analyzing', 'exercise_state', 'velocities', 'accelerations']]
+
+        # Prepare a dictionary to hold the lists of data for smoothing
+        data_to_smooth = {key: [] for key in keys_to_smooth}
+        data_to_smooth['velocities'] = {key: [] for key in velocity_keys}
+        data_to_smooth['accelerations'] = {key: [] for key in acceleration_keys}
+
+        # Populate the dictionary, filling missing values with 0
+        for frame in time_series:
+            for key in keys_to_smooth:
+                data_to_smooth[key].append(frame.get(key, 0))
+            for v_key in velocity_keys:
+                data_to_smooth['velocities'][v_key].append(frame.get('velocities', {}).get(v_key, 0))
+            for a_key in acceleration_keys:
+                data_to_smooth['accelerations'][a_key].append(frame.get('accelerations', {}).get(a_key, 0))
+        
+        # Apply the filter
+        window_length = min(11, len(time_series))
+        if window_length % 2 == 0:
+            window_length -= 1
+        
+        if window_length > 3:
+            for key, values in data_to_smooth.items():
+                if isinstance(values, dict):  # For velocities and accelerations
+                    for sub_key, sub_values in values.items():
+                        if len(sub_values) >= window_length:
+                            data_to_smooth[key][sub_key] = savgol_filter(sub_values, window_length, 3).tolist()
+                else:
+                    if len(values) >= window_length:
+                        data_to_smooth[key] = savgol_filter(values, window_length, 3).tolist()
+
+        # Reconstruct the time_series with smoothed data
+        smoothed_time_series = []
+        for i in range(len(time_series)):
+            new_frame = {
+                'frame_idx': time_series[i]['frame_idx'],
+                'time': time_series[i]['time'],
+                'is_concentric': time_series[i].get('is_concentric'),
+                'is_analyzing': time_series[i].get('is_analyzing'),
+                'exercise_state': time_series[i].get('exercise_state'),
+            }
+            for key in keys_to_smooth:
+                new_frame[key] = data_to_smooth[key][i]
+            
+            new_frame['velocities'] = {key: data_to_smooth['velocities'][key][i] for key in velocity_keys}
+            new_frame['accelerations'] = {key: data_to_smooth['accelerations'][key][i] for key in acceleration_keys}
+            
+            smoothed_time_series.append(new_frame)
+            
+        return smoothed_time_series
+
+
     def get_final_analysis(self) -> Dict:
         """Get the final analysis."""
         if self.frame_metrics:
@@ -291,8 +359,21 @@ class SquatAnalyzer(BaseAnalyzer):
 
         avg_intensity = np.mean(self.avg_acceleration) if self.avg_acceleration else 0
         
+        time_series = self.apply_smoothing(self.frame_metrics)
+        
+        # Flatten the velocities and accelerations
+        for frame in time_series:
+            if 'velocities' in frame:
+                for joint, value in frame['velocities'].items():
+                    frame[f'{joint.lower()}_velocity'] = value
+                del frame['velocities']
+            if 'accelerations' in frame:
+                for joint, value in frame['accelerations'].items():
+                    frame[f'{joint.lower()}_acceleration'] = value
+                del frame['accelerations']
+
         time_series = [
-            self.convert_numpy_types(frame) for frame in self.frame_metrics
+            self.convert_numpy_types(frame) for frame in time_series
         ]
         
         volume_over_time = [
