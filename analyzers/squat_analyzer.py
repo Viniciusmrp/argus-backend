@@ -34,7 +34,9 @@ class SquatAnalyzer(BaseAnalyzer):
         self.total_tension_time = 0
         self.accumulated_volume_over_time = []
         self.max_acceleration = 0
-        self.avg_acceleration = []
+        self.concentric_intensity = []
+        self.eccentric_intensity = []
+        self.total_intensity = 0
         
         # Previous state for specific metrics
         self.prev_hip_height = None
@@ -95,7 +97,9 @@ class SquatAnalyzer(BaseAnalyzer):
         self.total_tension_time = 0
         self.accumulated_volume_over_time = []
         self.max_acceleration = 0
-        self.avg_acceleration = []
+        self.concentric_intensity = []
+        self.eccentric_intensity = []
+        self.total_intensity = 0
         self.prev_hip_height = None
 
     def get_knee_angle_trend(self) -> str:
@@ -159,16 +163,27 @@ class SquatAnalyzer(BaseAnalyzer):
         is_concentric = self.detect_movement_phase(hip_height_world)
         
         hip_acceleration_magnitude = 0
-        intensity_value = 0
+        phase_intensity = 0
+        concentric_intensity_value = 0
+        eccentric_intensity_value = 0
+        
         if world_accelerations:
              left_hip_acc = world_accelerations.get("LEFT_HIP", np.array([0,0,0]))
              right_hip_acc = world_accelerations.get("RIGHT_HIP", np.array([0,0,0]))
              hip_acceleration = (left_hip_acc + right_hip_acc) / 2
              hip_acceleration_magnitude = np.linalg.norm(hip_acceleration)
             
-             intensity_value = hip_acceleration_magnitude if is_concentric else 1.0 / (1.0 + hip_acceleration_magnitude)
-             self.avg_acceleration.append(intensity_value)
-             self.max_acceleration = max(self.max_acceleration, intensity_value)
+             if is_concentric:
+                 concentric_intensity_value = hip_acceleration_magnitude
+                 self.concentric_intensity.append(concentric_intensity_value)
+                 phase_intensity = concentric_intensity_value
+             else:
+                 eccentric_intensity_value = 1.0 / (1.0 + hip_acceleration_magnitude)
+                 self.eccentric_intensity.append(eccentric_intensity_value)
+                 phase_intensity = eccentric_intensity_value
+             
+             self.total_intensity += phase_intensity
+             self.max_acceleration = max(self.max_acceleration, hip_acceleration_magnitude)
 
         frame_volume = 0
         if is_concentric and self.prev_hip_height is not None and self.user_weight > 0:
@@ -181,7 +196,9 @@ class SquatAnalyzer(BaseAnalyzer):
         frame_data = {
             'frame_idx': frame_idx, 'time': frame_idx / fps,
             'hip_height': hip_height_world, 'hip_acceleration': hip_acceleration_magnitude,
-            'is_concentric': is_concentric, 'phase_intensity': intensity_value,
+            'is_concentric': is_concentric, 'phase_intensity': phase_intensity,
+            'concentric_intensity': concentric_intensity_value,
+            'eccentric_intensity': eccentric_intensity_value,
             'frame_volume': frame_volume, 'accumulated_volume': self.total_volume,
             'is_analyzing': self.is_analyzing, 'exercise_state': self.rep_state,
             'current_reps': self.reps_completed,
@@ -263,7 +280,6 @@ class SquatAnalyzer(BaseAnalyzer):
             analysis_start_time = self.analysis_start_frame / 30.0
             self.total_tension_time = last_frame['time'] - analysis_start_time
 
-        avg_intensity = np.mean(self.avg_acceleration) if self.avg_acceleration else 0
         time_series = self.apply_smoothing(self.frame_metrics)
 
         # Flatten nested kinematics for easier consumption
@@ -273,12 +289,23 @@ class SquatAnalyzer(BaseAnalyzer):
 
         volume_score = min(100, (self.total_volume / 15.0) * 100)
         tut_score = min(100, (self.total_tension_time / 45.0) * 100)
-        intensity_score = min(100, avg_intensity * 50)
+        
+        avg_concentric_intensity = np.mean(self.concentric_intensity) if self.concentric_intensity else 0
+        avg_eccentric_intensity = np.mean(self.eccentric_intensity) if self.eccentric_intensity else 0
+        
+        concentric_intensity_score = min(100, avg_concentric_intensity * 50)
+        eccentric_intensity_score = min(100, avg_eccentric_intensity * 100)
+        
+        intensity_component = (concentric_intensity_score + eccentric_intensity_score) / 2
+        overall_score = (volume_score * 0.4) + (intensity_component * 0.3) + (tut_score * 0.3)
         
         analysis = {
             'scores': {
-                'overall': (volume_score * 0.4) + (intensity_score * 0.3) + (tut_score * 0.3),
-                'intensity': intensity_score, 'tut': tut_score, 'volume': volume_score
+                'overall': overall_score,
+                'concentric_intensity': concentric_intensity_score,
+                'eccentric_intensity': eccentric_intensity_score,
+                'tut': tut_score, 
+                'volume': volume_score
             },
             'reps': {
                 'total': self.reps_completed,
@@ -289,7 +316,10 @@ class SquatAnalyzer(BaseAnalyzer):
                 'time_under_tension': self.total_tension_time,
                 'time_efficiency': (self.total_tension_time / (self.frame_metrics[-1]['time'] - self.frame_metrics[0]['time']) * 100) if self.frame_metrics else 0,
                 'total_volume': {'value': self.total_volume, 'unit': 'kg·m'},
-                'max_intensity': self.max_acceleration, 'avg_intensity': avg_intensity,
+                'max_intensity': self.max_acceleration, 
+                'avg_concentric_intensity': avg_concentric_intensity,
+                'avg_eccentric_intensity': avg_eccentric_intensity,
+                'total_intensity': self.total_intensity,
             },
             'time_series_data': {
                 'volume_progression': self.accumulated_volume_over_time,
