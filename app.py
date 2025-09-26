@@ -169,17 +169,23 @@ def analyze_video(video_path, metadata, output_path):
     exercise_analyzer = get_analyzer(exercise_type)
     
     # Set user weight from metadata if available
-    user_load = metadata.get('load')
-    if user_load:
-        try:
-            # Convert to float and set
-            load_kg = float(user_load)
-            exercise_analyzer.set_user_weight(load_kg)
-            logging.info(f"Set user load to {load_kg} kg for volume calculations")
-        except (ValueError, TypeError) as e:
-            logging.warning(f"Could not parse user load '{user_load}': {str(e)}")
-            # Default to 1 kg if parsing fails
-            exercise_analyzer.set_user_weight(1.0)
+    user_weight = metadata.get('weight', 0)
+    user_load = metadata.get('load', 0)
+    
+    try:
+        # Convert to float and calculate total weight
+        user_weight_kg = float(user_weight)
+        load_kg = float(user_load)
+        total_weight_kg = user_weight_kg + load_kg
+        
+        exercise_analyzer.set_user_weight(total_weight_kg)
+        logging.info(f"Set total weight to {total_weight_kg} kg (user: {user_weight_kg}kg + load: {load_kg}kg) for volume calculations")
+    
+    except (ValueError, TypeError) as e:
+        logging.warning(f"Could not parse user weight or load. Defaulting to 1.0kg. Error: {str(e)}")
+        # Default to 1 kg if parsing fails
+        exercise_analyzer.set_user_weight(1.0)
+
 
     # Get rotation from metadata
     needs_rotation = metadata.get('isPortrait', False)

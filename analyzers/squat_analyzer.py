@@ -299,7 +299,6 @@ class SquatAnalyzer(BaseAnalyzer):
             for joint, value in frame.pop('velocities', {}).items(): frame[f'{joint.lower()}_velocity'] = value
             for joint, value in frame.pop('accelerations', {}).items(): frame[f'{joint.lower()}_acceleration'] = value
 
-        volume_score = min(100, (self.total_volume / 15.0) * 100)
         tut_score = min(100, (self.total_tension_time / 45.0) * 100)
         
         avg_concentric_intensity = np.mean(self.concentric_intensity) if self.concentric_intensity else 0
@@ -308,16 +307,11 @@ class SquatAnalyzer(BaseAnalyzer):
         concentric_intensity_score = min(100, avg_concentric_intensity * 50)
         eccentric_intensity_score = min(100, avg_eccentric_intensity * 100)
         
-        intensity_component = (concentric_intensity_score + eccentric_intensity_score) / 2
-        overall_score = (volume_score * 0.4) + (intensity_component * 0.3) + (tut_score * 0.3)
-        
         analysis = {
             'scores': {
-                'overall': overall_score,
                 'concentric_intensity': concentric_intensity_score,
                 'eccentric_intensity': eccentric_intensity_score,
-                'tut': tut_score, 
-                'volume': volume_score
+                'tut': tut_score
             },
             'reps': {
                 'total': self.reps_completed,
