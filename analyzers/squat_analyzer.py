@@ -79,6 +79,18 @@ class SquatAnalyzer(BaseAnalyzer):
             normalized_points.get(self.mp_pose.PoseLandmark.RIGHT_KNEE)
         )
         
+        # Ankle angles
+        angles['left_ankle'] = self.calculate_3d_angle(
+            normalized_points.get(self.mp_pose.PoseLandmark.LEFT_KNEE),
+            normalized_points.get(self.mp_pose.PoseLandmark.LEFT_ANKLE),
+            normalized_points.get(self.mp_pose.PoseLandmark.LEFT_FOOT_INDEX)
+        )
+        angles['right_ankle'] = self.calculate_3d_angle(
+            normalized_points.get(self.mp_pose.PoseLandmark.RIGHT_KNEE),
+            normalized_points.get(self.mp_pose.PoseLandmark.RIGHT_ANKLE),
+            normalized_points.get(self.mp_pose.PoseLandmark.RIGHT_FOOT_INDEX)
+        )
+        
         return angles
 
     def reset_analysis(self):
