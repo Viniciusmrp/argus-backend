@@ -32,6 +32,8 @@ class SquatAnalyzer(BaseAnalyzer):
         self.analysis_start_frame = 0
         self.start_time = 0
         self.total_tension_time = 0
+        self.tut_eccentric = 0
+        self.tut_concentric = 0
         self.accumulated_volume_over_time = []
         self.max_acceleration = 0
         self.concentric_intensity = []
@@ -107,6 +109,8 @@ class SquatAnalyzer(BaseAnalyzer):
         self.analysis_start_frame = 0
         self.start_time = 0
         self.total_tension_time = 0
+        self.tut_eccentric = 0
+        self.tut_concentric = 0
         self.accumulated_volume_over_time = []
         self.max_acceleration = 0
         self.concentric_intensity = []
@@ -173,6 +177,13 @@ class SquatAnalyzer(BaseAnalyzer):
         self.count_reps(avg_knee_angle, frame_idx, fps)
         
         is_concentric = self.detect_movement_phase(hip_height_world)
+        
+        frame_duration = 1.0 / fps
+        if self.rep_state == "descending" or self.rep_state == "ascending":
+            if is_concentric:
+                self.tut_concentric += frame_duration
+            else:
+                self.tut_eccentric += frame_duration
         
         hip_acceleration_magnitude = 0
         phase_intensity = 0
@@ -288,9 +299,7 @@ class SquatAnalyzer(BaseAnalyzer):
     def get_final_analysis(self) -> Dict:
         """Compile and return the final analysis summary."""
         if self.frame_metrics:
-            last_frame = self.frame_metrics[-1]
-            analysis_start_time = self.analysis_start_frame / 30.0
-            self.total_tension_time = last_frame['time'] - analysis_start_time
+            self.total_tension_time = self.tut_concentric + self.tut_eccentric
 
         time_series = self.apply_smoothing(self.frame_metrics)
 
@@ -298,8 +307,6 @@ class SquatAnalyzer(BaseAnalyzer):
         for frame in time_series:
             for joint, value in frame.pop('velocities', {}).items(): frame[f'{joint.lower()}_velocity'] = value
             for joint, value in frame.pop('accelerations', {}).items(): frame[f'{joint.lower()}_acceleration'] = value
-
-        tut_score = min(100, (self.total_tension_time / 45.0) * 100)
         
         avg_concentric_intensity = np.mean(self.concentric_intensity) if self.concentric_intensity else 0
         avg_eccentric_intensity = np.mean(self.eccentric_intensity) if self.eccentric_intensity else 0
@@ -310,8 +317,7 @@ class SquatAnalyzer(BaseAnalyzer):
         analysis = {
             'scores': {
                 'concentric_intensity': concentric_intensity_score,
-                'eccentric_intensity': eccentric_intensity_score,
-                'tut': tut_score
+                'eccentric_intensity': eccentric_intensity_score
             },
             'reps': {
                 'total': self.reps_completed,
@@ -320,7 +326,9 @@ class SquatAnalyzer(BaseAnalyzer):
             },
             'metrics': {
                 'time_under_tension': self.total_tension_time,
-                'time_efficiency': (self.total_tension_time / (self.frame_metrics[-1]['time'] - self.frame_metrics[0]['time']) * 100) if self.frame_metrics else 0,
+                'tut_concentric': self.tut_concentric,
+                'tut_eccentric': self.tut_eccentric,
+                'time_efficiency': (self.total_tension_time / (self.frame_metrics[-1]['time'] - self.frame_metrics[0]['time']) * 100) if self.frame_metrics and self.frame_metrics[-1]['time'] > self.frame_metrics[0]['time'] else 0,
                 'total_volume': {'value': self.total_volume, 'unit': 'kg·m'},
                 'max_intensity': self.max_acceleration, 
                 'avg_concentric_intensity': avg_concentric_intensity,
