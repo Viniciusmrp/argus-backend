@@ -39,6 +39,8 @@ class SquatAnalyzer(BaseAnalyzer):
         self.concentric_intensity = []
         self.eccentric_intensity = []
         self.total_intensity = 0
+        self.current_rep_eccentric_velocities = []
+        self.rep_steadiness_scores = []
         
         # Previous state for specific metrics
         self.prev_hip_height = None
@@ -117,6 +119,8 @@ class SquatAnalyzer(BaseAnalyzer):
         self.eccentric_intensity = []
         self.total_intensity = 0
         self.prev_hip_height = None
+        self.current_rep_eccentric_velocities = []
+        self.rep_steadiness_scores = []
 
     def get_knee_angle_trend(self) -> str:
         """Determines the trend of knee angle movement (ascending, descending, stationary)."""
@@ -150,12 +154,21 @@ class SquatAnalyzer(BaseAnalyzer):
             rep_duration = current_time - self.current_rep_start_time
             if self.MIN_REP_DURATION <= rep_duration <= self.MAX_REP_DURATION:
                 self.reps_completed += 1
+                
+                steadiness_score = 0
+                if self.current_rep_eccentric_velocities:
+                    steadiness_std = np.std(self.current_rep_eccentric_velocities)
+                    steadiness_score = max(0, 100 - (steadiness_std * 200))
+                    self.rep_steadiness_scores.append(steadiness_score)
+
                 self.rep_details.append({
                     'rep_number': self.reps_completed,
                     'start_frame': self.current_rep_start_frame, 'end_frame': frame_idx,
                     'duration': rep_duration,
-                    'start_time': self.current_rep_start_time, 'end_time': current_time
+                    'start_time': self.current_rep_start_time, 'end_time': current_time,
+                    'steadiness_score': steadiness_score
                 })
+                self.current_rep_eccentric_velocities.clear()
             self.rep_state = "standing"
 
     def detect_movement_phase(self, hip_height: float) -> bool:
@@ -185,6 +198,12 @@ class SquatAnalyzer(BaseAnalyzer):
             else:
                 self.tut_eccentric += frame_duration
         
+        if self.rep_state == "descending":
+            left_hip_velocity_y = world_velocities.get("LEFT_HIP", np.array([0,0,0]))[1]
+            right_hip_velocity_y = world_velocities.get("RIGHT_HIP", np.array([0,0,0]))[1]
+            hip_velocity_y = (left_hip_velocity_y + right_hip_velocity_y) / 2
+            self.current_rep_eccentric_velocities.append(hip_velocity_y)
+
         hip_acceleration_magnitude = 0
         phase_intensity = 0
         concentric_intensity_value = 0
@@ -310,6 +329,7 @@ class SquatAnalyzer(BaseAnalyzer):
         
         avg_concentric_intensity = np.mean(self.concentric_intensity) if self.concentric_intensity else 0
         avg_eccentric_intensity = np.mean(self.eccentric_intensity) if self.eccentric_intensity else 0
+        avg_steadiness_score = np.mean(self.rep_steadiness_scores) if self.rep_steadiness_scores else 0
         
         concentric_intensity_score = min(100, avg_concentric_intensity * 50)
         eccentric_intensity_score = min(100, avg_eccentric_intensity * 100)
@@ -317,7 +337,8 @@ class SquatAnalyzer(BaseAnalyzer):
         analysis = {
             'scores': {
                 'concentric_intensity': concentric_intensity_score,
-                'eccentric_intensity': eccentric_intensity_score
+                'eccentric_intensity': eccentric_intensity_score,
+                'eccentric_steadiness': avg_steadiness_score
             },
             'reps': {
                 'total': self.reps_completed,
