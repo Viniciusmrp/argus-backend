@@ -35,10 +35,8 @@ class SquatAnalyzer(BaseAnalyzer):
         self.tut_eccentric = 0
         self.tut_concentric = 0
         self.accumulated_volume_over_time = []
-        self.max_acceleration = 0
-        self.concentric_intensity = []
-        self.eccentric_intensity = []
-        self.total_intensity = 0
+        self.max_power = 0
+        self.concentric_power = []
         self.current_rep_eccentric_velocities = []
         self.rep_steadiness_scores = []
         
@@ -114,10 +112,8 @@ class SquatAnalyzer(BaseAnalyzer):
         self.tut_eccentric = 0
         self.tut_concentric = 0
         self.accumulated_volume_over_time = []
-        self.max_acceleration = 0
-        self.concentric_intensity = []
-        self.eccentric_intensity = []
-        self.total_intensity = 0
+        self.max_power = 0
+        self.concentric_power = []
         self.prev_hip_height = None
         self.current_rep_eccentric_velocities = []
         self.rep_steadiness_scores = []
@@ -205,27 +201,30 @@ class SquatAnalyzer(BaseAnalyzer):
             self.current_rep_eccentric_velocities.append(hip_velocity_y)
 
         hip_acceleration_magnitude = 0
-        phase_intensity = 0
-        concentric_intensity_value = 0
-        eccentric_intensity_value = 0
+        phase_power = 0
+        concentric_power_value = 0
         
-        if world_accelerations:
-             left_hip_acc = world_accelerations.get("LEFT_HIP", np.array([0,0,0]))
-             right_hip_acc = world_accelerations.get("RIGHT_HIP", np.array([0,0,0]))
-             hip_acceleration = (left_hip_acc + right_hip_acc) / 2
-             hip_acceleration_magnitude = np.linalg.norm(hip_acceleration)
-            
-             if is_concentric:
-                 concentric_intensity_value = hip_acceleration_magnitude
-                 self.concentric_intensity.append(concentric_intensity_value)
-                 phase_intensity = concentric_intensity_value
-             else:
-                 eccentric_intensity_value = 1.0 / (1.0 + hip_acceleration_magnitude)
-                 self.eccentric_intensity.append(eccentric_intensity_value)
-                 phase_intensity = eccentric_intensity_value
-             
-             self.total_intensity += phase_intensity
-             self.max_acceleration = max(self.max_acceleration, hip_acceleration_magnitude)
+        if world_accelerations and self.user_weight > 0:
+            left_hip_acc = world_accelerations.get("LEFT_HIP", np.array([0,0,0]))
+            right_hip_acc = world_accelerations.get("RIGHT_HIP", np.array([0,0,0]))
+            hip_acceleration = (left_hip_acc + right_hip_acc) / 2
+            hip_acceleration_magnitude = np.linalg.norm(hip_acceleration)
+
+            if is_concentric:
+                left_hip_vel = world_velocities.get("LEFT_HIP", np.array([0,0,0]))
+                right_hip_vel = world_velocities.get("RIGHT_HIP", np.array([0,0,0]))
+                hip_velocity = (left_hip_vel + right_hip_vel) / 2
+                
+                # Power = F · v = (m * a) · v
+                force = self.user_weight * hip_acceleration
+                power = np.dot(force, hip_velocity)
+                
+                # We are interested in positive power output during the concentric phase
+                if power > 0:
+                    concentric_power_value = power
+                    self.concentric_power.append(concentric_power_value)
+                    phase_power = concentric_power_value
+                    self.max_power = max(self.max_power, concentric_power_value)
 
         frame_volume = 0
         if is_concentric and self.prev_hip_height is not None and self.user_weight > 0:
@@ -238,9 +237,8 @@ class SquatAnalyzer(BaseAnalyzer):
         frame_data = {
             'frame_idx': frame_idx, 'time': frame_idx / fps,
             'hip_height': hip_height_world, 'hip_acceleration': hip_acceleration_magnitude,
-            'is_concentric': is_concentric, 'phase_intensity': phase_intensity,
-            'concentric_intensity': concentric_intensity_value,
-            'eccentric_intensity': eccentric_intensity_value,
+            'is_concentric': is_concentric, 'phase_power': phase_power,
+            'concentric_power': concentric_power_value,
             'frame_volume': frame_volume, 'accumulated_volume': self.total_volume,
             'is_analyzing': self.is_analyzing, 'exercise_state': self.rep_state,
             'current_reps': self.reps_completed,
@@ -327,17 +325,11 @@ class SquatAnalyzer(BaseAnalyzer):
             for joint, value in frame.pop('velocities', {}).items(): frame[f'{joint.lower()}_velocity'] = value
             for joint, value in frame.pop('accelerations', {}).items(): frame[f'{joint.lower()}_acceleration'] = value
         
-        avg_concentric_intensity = np.mean(self.concentric_intensity) if self.concentric_intensity else 0
-        avg_eccentric_intensity = np.mean(self.eccentric_intensity) if self.eccentric_intensity else 0
+        avg_concentric_power = np.mean(self.concentric_power) if self.concentric_power else 0
         avg_steadiness_score = np.mean(self.rep_steadiness_scores) if self.rep_steadiness_scores else 0
-        
-        concentric_intensity_score = min(100, avg_concentric_intensity * 50)
-        eccentric_intensity_score = min(100, avg_eccentric_intensity * 100)
         
         analysis = {
             'scores': {
-                'concentric_intensity': concentric_intensity_score,
-                'eccentric_intensity': eccentric_intensity_score,
                 'eccentric_steadiness': avg_steadiness_score
             },
             'reps': {
@@ -351,10 +343,8 @@ class SquatAnalyzer(BaseAnalyzer):
                 'tut_eccentric': self.tut_eccentric,
                 'time_efficiency': (self.total_tension_time / (self.frame_metrics[-1]['time'] - self.frame_metrics[0]['time']) * 100) if self.frame_metrics and self.frame_metrics[-1]['time'] > self.frame_metrics[0]['time'] else 0,
                 'total_volume': {'value': self.total_volume, 'unit': 'kg·m'},
-                'max_intensity': self.max_acceleration, 
-                'avg_concentric_intensity': avg_concentric_intensity,
-                'avg_eccentric_intensity': avg_eccentric_intensity,
-                'total_intensity': self.total_intensity,
+                'max_power': {'value': self.max_power, 'unit': 'Watts'},
+                'avg_concentric_power': {'value': avg_concentric_power, 'unit': 'Watts'},
             },
             'time_series_data': {
                 'volume_progression': self.accumulated_volume_over_time,
