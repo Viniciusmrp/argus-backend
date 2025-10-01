@@ -34,6 +34,12 @@ if not firebase_admin._apps:  # Prevent reinitialization during hot-reloads
 # Get Firestore client
 db = firestore.client()
 
+def _to_float(value, default=0.0):
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
 def get_service_account_key():
     # Create a client to interact with Google Secret Manager
     client = secretmanager.SecretManagerServiceClient()
@@ -447,8 +453,9 @@ def process_video():
         
         @firestore.transactional
         def check_and_set_lock(transaction):
-            event_doc = transaction.get(event_lock_ref)
-            if event_doc.exists:
+            event_doc_generator = transaction.get(event_lock_ref)
+            event_doc = next(event_doc_generator, None)
+            if event_doc and event_doc.exists:
                 # Document already exists, so this is a duplicate event.
                 return False # Indicate failure
             else:
@@ -622,9 +629,9 @@ def save_video_info():
         # Save metadata to Firestore with videoID as the document ID
         db.collection("userVideos").document(video_id).set({
             "email": data.get("email"),
-            "weight": data.get("weight"),
+            "weight": _to_float(data.get("weight")),
             "height": data.get("height"),
-            "load": data.get("load"),
+            "load": _to_float(data.get("load")),
             "videoName": video_name,
             "isPortrait": data.get("isPortrait", False),
             "exercise": data.get("exercise"),
