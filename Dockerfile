@@ -24,5 +24,5 @@ COPY . /app
 # Expose the port the app runs on
 EXPOSE 8080
 
-# Run the Flask app
-CMD ["python", "app.py"]
+# Run the Flask app with Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "app:app"]

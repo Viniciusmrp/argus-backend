@@ -430,39 +430,78 @@ def process_video():
 
         # Extract event ID and check for duplicate processing
         event_id = event_data.get("id", "")
-        if event_id:
-            doc_ref = db.collection("processed_events").document(event_id)
-            doc = doc_ref.get()
-            if doc.exists:
-                logging.info(f"Event {event_id} already processed, skipping")
-                return jsonify({"message": "Event already processed"}), 200
+        if not event_id:
+            # If there's no event ID, we can't de-duplicate.
+            # Fallback to checking by video name, but this is less robust.
+            logging.warning("Event data missing 'id'. Will use video_id for de-duplication.")
+            bucket_name_temp = event_data.get("bucket", "")
+            video_name_temp = event_data.get("name", "")
+            if not video_name_temp:
+                 logging.error("Bad Request: No 'name' in event data.")
+                 return "Bad Request: No 'name' in event data.", 400
+            event_id = video_name_temp.rsplit(".", 1)[0] # Use video_id as the lock ID
+        
+        # --- ATOMIC LOCKING START ---
+        # Use the event_id as the document ID for an atomic lock
+        event_lock_ref = db.collection("processed_events").document(event_id)
+        
+        @firestore.transactional
+        def check_and_set_lock(transaction):
+            event_doc = transaction.get(event_lock_ref)
+            if event_doc.exists:
+                # Document already exists, so this is a duplicate event.
+                return False # Indicate failure
+            else:
+                # Document doesn't exist. Create it within the transaction to claim the lock.
+                transaction.set(event_lock_ref, {
+                    "processed_at": datetime.datetime.utcnow().isoformat(),
+                    "status": "processing" # Mark as processing
+                })
+                return True # Indicate success
+        
+        transaction = db.transaction()
+        lock_acquired = check_and_set_lock(transaction)
+
+        if not lock_acquired:
+            logging.warning(f"Duplicate event {event_id} received, skipping.")
+            return jsonify({"message": "Event already processed or is processing"}), 200
+        # --- ATOMIC LOCKING END ---
+        
+        # If we are here, we acquired the lock.
+        logging.info(f"Acquired lock for event: {event_id}")
 
         bucket_name = event_data.get("bucket", "")
         video_name = event_data.get("name", "")
         video_id = video_name.rsplit(".", 1)[0]
         
-        log_extra = {"video_id": video_id, "bucket_name": bucket_name, "video_name": video_name}
+        log_extra = {"video_id": video_id, "bucket": bucket_name, "video_name": video_name, "event_id": event_id}
 
         if not bucket_name or not video_name:
             logging.error("Missing bucket or object name in Eventarc event.", extra=log_extra)
             return "Bad Request: Missing bucket or object name", 400
 
-        logging.info("Processing video.", extra=log_extra)
+        logging.info("Starting video processing.", extra=log_extra)
 
         analyzed_video_name = f"{video_id}_analyzed.mp4"
 
-        # Check if analyzed video already exists
+        # You can remove this check, as the atomic lock is stronger.
+        # But keeping it adds a second layer of safety.
         storage_client = get_storage_client_with_credentials()
         analyzed_bucket = storage_client.bucket("gym-videos-out")
         analyzed_blob = analyzed_bucket.blob(analyzed_video_name)
 
         if analyzed_blob.exists():
-            logging.info(f"Skipping already processed video: {analyzed_video_name}", extra=log_extra)
+            logging.info(f"Skipping already processed video (output file exists): {analyzed_video_name}", extra=log_extra)
+            # Update the lock file to "completed"
+            event_lock_ref.set({"status": "completed_output_existed"}, merge=True)
             return jsonify({"message": "Video already processed"}), 200
 
         # Fetch metadata
         metadata = fetch_metadata_from_firestore(video_id)
         if not metadata:
+            logging.error(f"No metadata found for video ID: {video_id}", extra=log_extra)
+            # Update lock file to "failed"
+            event_lock_ref.set({"status": "failed_no_metadata"}, merge=True)
             return jsonify({"error": f"No metadata found for video ID: {video_id}"}), 200
 
         # Create temporary files
@@ -475,7 +514,7 @@ def process_video():
         try:
             # Download input video
             download_video_from_gcs(bucket_name, video_name, input_path)
-            logging.info("Video downloaded successfully.", extra=log_extra)
+            logging.info("Video downloaded successfully", extra=log_extra)
 
             # Process video
             result = analyze_video(input_path, metadata, output_path)
@@ -486,16 +525,28 @@ def process_video():
             upload_analyzed_video_to_gcs(output_path, analyzed_video_name)
             
             # Mark event as processed only after successful completion
-            if event_id:
-                db.collection("processed_events").document(event_id).set({
-                    "processed_at": datetime.datetime.utcnow().isoformat()
-                })
+            # Update the lock status to "completed"
+            event_lock_ref.set({
+                "status": "completed_success",
+                "processed_at": datetime.datetime.utcnow().isoformat() # Update timestamp
+            }, merge=True)
 
-            logging.info("Video processed successfully.", extra=log_extra)
+            logging.info("Video processed successfully", extra=log_extra)
             return jsonify({
                 "message": "Video processed successfully",
                 "analyzedVideo": analyzed_video_name
             }), 200
+        
+        except Exception as e:
+            # Handle processing failure
+            logging.error(f"Video analysis failed: {e}", extra=log_extra, exc_info=True)
+            # Update the lock status to "failed"
+            event_lock_ref.set({
+                "status": "failed_analysis",
+                "error": str(e)
+            }, merge=True)
+            # Re-raise the exception to be caught by the outer try/except
+            raise
 
         finally:
             # Clean up temporary files
@@ -503,36 +554,23 @@ def process_video():
                 os.remove(input_path)
             if os.path.exists(output_path):
                 os.remove(output_path)
-            logging.debug("Temporary files cleaned up.", extra=log_extra)
+            logging.info("Temporary files cleaned up", extra=log_extra)
 
     except Exception as e:
+        # General error handler
         error_message = "Internal Server Error during video processing"
         status_code = 500
-        log_extra = {}
-        try:
-            event_data = request.get_json() or {}
-            log_extra = {
-                "video_id": event_data.get("name", "").rsplit(".", 1)[0],
-                "bucket_name": event_data.get("bucket", ""),
-                "video_name": event_data.get("name", "")
-            }
-        except Exception:
-            pass # Ignore if we can't get request data in an error state
-
         if isinstance(e, NotFound):
             error_message = f"Resource not found: {e}"
             status_code = 404
-            logging.warning(error_message, extra=log_extra)
         elif isinstance(e, ValueError):
              error_message = f"Invalid data in event payload: {e}"
              status_code = 400
-             logging.warning(error_message, extra=log_extra)
         else:
-            # Log unhandled exceptions with full traceback
-            logging.error(f"Unhandled error processing video: {e}", exc_info=True, extra=log_extra)
+            logging.error(f"Unhandled error processing video: {e}", exc_info=True)
 
         return jsonify({"error": error_message}), status_code
-
+        
 @app.route('/exercise-analysis/<video_id>', methods=['GET'])
 def get_exercise_analysis(video_id):
     log_extra = {"video_id": video_id}
