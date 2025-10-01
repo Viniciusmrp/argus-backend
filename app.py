@@ -66,7 +66,8 @@ def download_video_from_gcs(bucket_name, source_blob_name, destination_file_name
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(source_blob_name)
     blob.download_to_filename(destination_file_name)
-    logging.info(f"Downloaded {source_blob_name} from bucket {bucket_name} to {destination_file_name}.")
+    log_extra = {"video_name": source_blob_name, "bucket": bucket_name}
+    logging.info(f"Downloaded {source_blob_name} from bucket {bucket_name} to {destination_file_name}.", extra=log_extra)
 
 def fetch_metadata_from_firestore(video_id):
     #Fetch metadata from Firestore based on the video ID.
@@ -75,7 +76,7 @@ def fetch_metadata_from_firestore(video_id):
     if doc.exists:
         return doc.to_dict()
     else:
-        logging.error(f"No metadata found for video ID: {video_id}")
+        logging.error(f"No metadata found for video ID: {video_id}", extra={"video_id": video_id})
         return None
     
 def get_video_rotation(input_path):
@@ -91,7 +92,7 @@ def get_video_rotation(input_path):
             input_path
         ]
         rotation_stream = subprocess.check_output(cmd_stream).decode('utf-8').strip()
-        logging.info(f"Detected rotation from stream tags: {rotation_stream}")
+        logging.debug(f"Detected rotation from stream tags: {rotation_stream}")
         
         if rotation_stream:
             return int(rotation_stream)
@@ -106,13 +107,13 @@ def get_video_rotation(input_path):
             input_path
         ]
         matrix_output = json.loads(subprocess.check_output(cmd_matrix).decode('utf-8'))
-        logging.info(f"Display matrix output: {matrix_output}")
+        logging.debug(f"Display matrix output: {matrix_output}")
         
         if 'streams' in matrix_output and matrix_output['streams']:
             side_data_list = matrix_output['streams'][0].get('side_data_list', [])
             for side_data in side_data_list:
                 if 'rotation' in side_data:
-                    logging.info(f"Found rotation in display matrix: {side_data['rotation']}")
+                    logging.debug(f"Found rotation in display matrix: {side_data['rotation']}")
                     return int(side_data['rotation'])
 
         logging.info("No rotation metadata found in any source")
@@ -134,8 +135,7 @@ def debug_video_metadata(input_path):
             input_path
         ]
         metadata = json.loads(subprocess.check_output(cmd).decode('utf-8'))
-        logging.info("Full video metadata:")
-        logging.info(json.dumps(metadata, indent=2))
+        logging.debug("Full video metadata:", extra={"metadata": json.dumps(metadata, indent=2)})
     except Exception as e:
         logging.error(f"Error getting debug metadata: {str(e)}")
 
@@ -162,7 +162,12 @@ def analyze_video(video_path, metadata, output_path):
     """
     Analyze the video using MediaPipe's 3D pose estimation, draw landmarks, and save the analyzed video.
     """
-    logging.info(f"Analyzing video: {video_path} with metadata: {metadata}")
+    video_name = metadata.get('videoName', 'unknown_video')
+    video_id = video_name.split('.')[0] if '.' in video_name else video_name
+    log_extra = {"video_id": video_id, "video_name": video_name}
+
+    logging.info("Starting video analysis.", extra=log_extra)
+    logging.debug(f"Analyzing with metadata: {metadata}", extra=log_extra)
 
     # Initialize exercise analyzer
     exercise_type = metadata.get('exercise', 'squat')
@@ -179,22 +184,19 @@ def analyze_video(video_path, metadata, output_path):
         total_weight_kg = user_weight_kg + load_kg
         
         exercise_analyzer.set_user_weight(total_weight_kg)
-        logging.info(f"Set total weight to {total_weight_kg} kg (user: {user_weight_kg}kg + load: {load_kg}kg) for volume calculations")
+        logging.info(f"Set total weight to {total_weight_kg} kg (user: {user_weight_kg}kg + load: {load_kg}kg) for volume calculations", extra=log_extra)
     
     except (ValueError, TypeError) as e:
-        logging.warning(f"Could not parse user weight or load. Defaulting to 1.0kg. Error: {str(e)}")
+        logging.warning(f"Could not parse user weight or load. Defaulting to 1.0kg. Error: {str(e)}", extra=log_extra)
         # Default to 1 kg if parsing fails
         exercise_analyzer.set_user_weight(1.0)
 
-
     # Get rotation from metadata
     needs_rotation = metadata.get('isPortrait', False)
-    logging.info(f"Video needs rotation based on metadata: {needs_rotation}")
+    logging.info(f"Video needs rotation based on metadata: {needs_rotation}", extra=log_extra)
 
     # Initialize MediaPipe pose solution with 3D tracking
-    mp_drawing = mp.solutions.drawing_utils
     mp_pose = mp.solutions.pose
-    mp_drawing_styles = mp.solutions.drawing_styles
     
     pose = mp_pose.Pose(
         model_complexity=2,  # Use the most accurate model
@@ -204,7 +206,7 @@ def analyze_video(video_path, metadata, output_path):
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        logging.error(f"Failed to open video: {video_path}")
+        logging.error(f"Failed to open video: {video_path}", extra=log_extra)
         return False
 
     # Get video properties
@@ -213,7 +215,7 @@ def analyze_video(video_path, metadata, output_path):
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     if fps <= 0:
         fps = 30
-        logging.warning(f"Invalid FPS detected, defaulting to {fps}")
+        logging.warning(f"Invalid FPS detected, defaulting to {fps}", extra=log_extra)
 
     # Create temporary file for initial OpenCV processing
     temp_output = output_path.replace('.mp4', '_temp.mp4')
@@ -238,7 +240,7 @@ def analyze_video(video_path, metadata, output_path):
         )
 
     if not out.isOpened():
-        logging.error("Failed to initialize VideoWriter")
+        logging.error("Failed to initialize VideoWriter", extra=log_extra)
         cap.release()
         return False
 
@@ -265,7 +267,7 @@ def analyze_video(video_path, metadata, output_path):
                 landmarks_detected += 1
                 
                 # Process frame with the exercise analyzer - this now draws only selected landmarks
-                frame_metrics = exercise_analyzer.analyze_frame(
+                exercise_analyzer.analyze_frame(
                     results.pose_landmarks,
                     results.pose_world_landmarks,
                     frame_count,
@@ -277,16 +279,13 @@ def analyze_video(video_path, metadata, output_path):
             out.write(frame)
             frame_count += 1
 
-            if frame_count % 30 == 0:
-                logging.info(f"Processed {frame_count} frames, detected landmarks in {landmarks_detected} frames")
+            if frame_count % 100 == 0:
+                logging.debug(f"Processed {frame_count} frames, detected landmarks in {landmarks_detected} frames", extra=log_extra)
             
         # Get final analysis after processing all frames
         analysis_results = exercise_analyzer.get_final_analysis()
 
-        # Extract video ID
-        original_video_name = metadata.get('videoName')
-        video_id = original_video_name.split('.')[0] if original_video_name else video_path.split('/')[-1].split('.')[0]
-        logging.info(f"Using video ID for Firestore: {video_id}")
+        logging.info("Finished processing frames. Saving analysis to Firestore.", extra=log_extra)
         
         # --- NEW FIRESTORE SAVING LOGIC ---
         try:
@@ -299,7 +298,7 @@ def analyze_video(video_path, metadata, output_path):
 
             # 3. Save the main analysis data to the primary document
             db.collection("exerciseAnalysis").document(video_id).set(main_analysis_data)
-            logging.info(f"Successfully saved main analysis results to Firestore with ID: {video_id}")
+            logging.info(f"Successfully saved main analysis results to Firestore.", extra=log_extra)
 
             # 4. Batch and save the time_series data to a subcollection
             batch = db.batch()
@@ -314,10 +313,10 @@ def analyze_video(video_path, metadata, output_path):
                 batch.set(doc_ref, {"data": chunk})
             
             batch.commit()
-            logging.info(f"Successfully saved {len(kinematics_data)} time_series frames in chunks for video ID: {video_id}")
+            logging.info(f"Successfully saved {len(kinematics_data)} time_series frames in chunks.", extra=log_extra)
 
         except Exception as e:
-            logging.error(f"Error saving to Firestore. Video ID: {video_id}, Error: {str(e)}")
+            logging.error(f"Error saving to Firestore: {str(e)}", extra=log_extra)
             raise
 
     finally:
@@ -338,23 +337,23 @@ def analyze_video(video_path, metadata, output_path):
             output_path
         ]
         
-        logging.info(f"Executing FFmpeg command: {' '.join(ffmpeg_cmd)}")
-        result = subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
-        logging.info("Successfully transcoded video with ffmpeg")
+        logging.debug(f"Executing FFmpeg command: {' '.join(ffmpeg_cmd)}", extra=log_extra)
+        subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
+        logging.info("Successfully transcoded video with ffmpeg", extra=log_extra)
         
         if os.path.exists(temp_output):
             os.remove(temp_output)
             
     except Exception as e:
-        logging.error(f"Error during ffmpeg processing: {str(e)}")
+        logging.error(f"Error during ffmpeg processing: {str(e)}", extra=log_extra)
         if os.path.exists(temp_output):
             os.rename(temp_output, output_path)
 
     if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-        logging.info(f"Successfully created video: {output_path}")
+        logging.info(f"Successfully created video: {output_path}", extra=log_extra)
         return True
     else:
-        logging.error("Failed to create valid output video")
+        logging.error("Failed to create valid output video", extra=log_extra)
         return False
             
 def upload_analyzed_video_to_gcs(source_file_path, destination_blob_name):
@@ -442,13 +441,13 @@ def process_video():
         video_name = event_data.get("name", "")
         video_id = video_name.rsplit(".", 1)[0]
         
-        log_extra = {"video_id": video_id, "bucket": bucket_name, "video_name": video_name}
+        log_extra = {"video_id": video_id, "bucket_name": bucket_name, "video_name": video_name}
 
         if not bucket_name or not video_name:
             logging.error("Missing bucket or object name in Eventarc event.", extra=log_extra)
             return "Bad Request: Missing bucket or object name", 400
 
-        logging.info(f"Processing video.", extra=log_extra)
+        logging.info("Processing video.", extra=log_extra)
 
         analyzed_video_name = f"{video_id}_analyzed.mp4"
 
@@ -464,7 +463,6 @@ def process_video():
         # Fetch metadata
         metadata = fetch_metadata_from_firestore(video_id)
         if not metadata:
-            logging.error(f"No metadata found for video ID: {video_id}", extra=log_extra)
             return jsonify({"error": f"No metadata found for video ID: {video_id}"}), 200
 
         # Create temporary files
@@ -477,7 +475,7 @@ def process_video():
         try:
             # Download input video
             download_video_from_gcs(bucket_name, video_name, input_path)
-            logging.info("Video downloaded successfully", extra=log_extra)
+            logging.info("Video downloaded successfully.", extra=log_extra)
 
             # Process video
             result = analyze_video(input_path, metadata, output_path)
@@ -493,7 +491,7 @@ def process_video():
                     "processed_at": datetime.datetime.utcnow().isoformat()
                 })
 
-            logging.info("Video processed successfully", extra=log_extra)
+            logging.info("Video processed successfully.", extra=log_extra)
             return jsonify({
                 "message": "Video processed successfully",
                 "analyzedVideo": analyzed_video_name
@@ -505,35 +503,48 @@ def process_video():
                 os.remove(input_path)
             if os.path.exists(output_path):
                 os.remove(output_path)
-            logging.info("Temporary files cleaned up", extra=log_extra)
+            logging.debug("Temporary files cleaned up.", extra=log_extra)
 
     except Exception as e:
         error_message = "Internal Server Error during video processing"
         status_code = 500
+        log_extra = {}
+        try:
+            event_data = request.get_json() or {}
+            log_extra = {
+                "video_id": event_data.get("name", "").rsplit(".", 1)[0],
+                "bucket_name": event_data.get("bucket", ""),
+                "video_name": event_data.get("name", "")
+            }
+        except Exception:
+            pass # Ignore if we can't get request data in an error state
+
         if isinstance(e, NotFound):
             error_message = f"Resource not found: {e}"
             status_code = 404
-        # Note: KeyError and ValueError handling was removed as per the unified diff request
+            logging.warning(error_message, extra=log_extra)
         elif isinstance(e, ValueError):
              error_message = f"Invalid data in event payload: {e}"
              status_code = 400
+             logging.warning(error_message, extra=log_extra)
         else:
             # Log unhandled exceptions with full traceback
-            logging.error(f"Unhandled error processing video: {e}", exc_info=True)
+            logging.error(f"Unhandled error processing video: {e}", exc_info=True, extra=log_extra)
 
         return jsonify({"error": error_message}), status_code
 
 @app.route('/exercise-analysis/<video_id>', methods=['GET'])
 def get_exercise_analysis(video_id):
+    log_extra = {"video_id": video_id}
     try:
-        logging.info(f"Fetching exercise analysis for video_id: {video_id}")
+        logging.info(f"Fetching exercise analysis.", extra=log_extra)
         
         # Fetch analysis results from Firestore
         doc_ref = db.collection("exerciseAnalysis").document(video_id)
         doc = doc_ref.get()
         
         if doc.exists:
-            logging.info(f"Analysis found for video_id: {video_id}")
+            logging.info("Analysis found.", extra=log_extra)
             analysis_data = doc.to_dict()
             
             # Now, fetch the time_series data from the subcollection
@@ -544,17 +555,17 @@ def get_exercise_analysis(video_id):
             
             analysis_data['time_series_data'] = {'kinematics': time_series_data}
             
-            logging.info(f"Analysis data: {json.dumps(analysis_data, indent=2)}")
+            logging.debug(f"Returning analysis data.", extra=log_extra)
             return jsonify(analysis_data)
         else:
-            logging.warning(f"No analysis found for video_id: {video_id}")
+            logging.warning("No analysis found.", extra=log_extra)
             return jsonify({
                 'status': 'error',
                 'message': 'Analysis not found'
             }), 404
             
     except Exception as e:
-        logging.error(f"Error fetching exercise analysis: {e}", exc_info=True)
+        logging.error(f"Error fetching exercise analysis: {e}", exc_info=True, extra=log_extra)
         return jsonify({
             'status': 'error',
             'message': 'Internal server error'
@@ -564,10 +575,11 @@ def get_exercise_analysis(video_id):
 def save_video_info():
     try:
         data = request.get_json()
-        logging.info(f"Received metadata: {data}")
-
-        video_name = data.get("videoName")
+        video_name = data.get("videoName", "unknown.mp4")
         video_id = video_name.rsplit(".", 1)[0]
+        log_extra = {"video_id": video_id, "video_name": video_name}
+
+        logging.debug(f"Received metadata: {data}", extra=log_extra)
 
         # Save metadata to Firestore with videoID as the document ID
         db.collection("userVideos").document(video_id).set({
@@ -576,22 +588,30 @@ def save_video_info():
             "height": data.get("height"),
             "load": data.get("load"),
             "videoName": video_name,
-            "isPortrait": data.get("isPortrait", False),  # Add this line
+            "isPortrait": data.get("isPortrait", False),
             "exercise": data.get("exercise"),
             "uploadedAt": datetime.datetime.utcnow().isoformat(),
         })
 
-        logging.info(f"Metadata saved successfully with videoID: {video_id}")
+        logging.info(f"Metadata saved successfully.", extra=log_extra)
         return jsonify({"message": "Video info saved successfully"}), 200
     
     except Exception as e:
-        logging.error(f"Error saving video info: {e}", exc_info=True)
+        log_extra = {}
+        try:
+            data = request.get_json() or {}
+            video_name = data.get("videoName", "unknown.mp4")
+            log_extra = {"video_id": video_name.rsplit(".", 1)[0], "video_name": video_name}
+        except Exception:
+            pass
+        logging.error(f"Error saving video info: {e}", exc_info=True, extra=log_extra)
         return jsonify({"error": "Internal Server Error"}), 500
     
 @app.route('/video-status/<video_name>', methods=['GET'])
 def get_video_status(video_name):
+    log_extra = {"video_name": video_name}
     try:
-        logging.info(f"Checking status for video: {video_name}")
+        logging.info(f"Checking status for video.", extra=log_extra)
 
         credentials = get_service_account_key()
         storage_client = storage.Client(credentials=credentials)
@@ -627,7 +647,7 @@ def get_video_status(video_name):
         }), 404
 
     except Exception as e:
-        logging.error(f"Error checking video status: {str(e)}")
+        logging.error(f"Error checking video status: {str(e)}", extra=log_extra)
         return jsonify({
             'status': 'error',
             'message': 'Error checking video status'
