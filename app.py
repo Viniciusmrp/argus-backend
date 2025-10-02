@@ -5,7 +5,7 @@ import mediapipe as mp
 from google.cloud import storage, secretmanager
 from google.cloud.exceptions import NotFound
 from google.oauth2 import service_account
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import tempfile
 import os
@@ -13,9 +13,10 @@ import datetime
 import logging
 import subprocess
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth
 import json
 from analyzers.analyzer_factory import get_analyzer
+from functools import wraps
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -33,6 +34,29 @@ if not firebase_admin._apps:  # Prevent reinitialization during hot-reloads
 
 # Get Firestore client
 db = firestore.client()
+
+def token_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Allow OPTIONS requests to pass through for CORS preflight checks
+        if request.method == 'OPTIONS':
+            return f(*args, **kwargs)
+
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'message': 'Authorization token is missing or invalid'}), 401
+        
+        id_token = auth_header.split('Bearer ')[1]
+        try:
+            decoded_token = auth.verify_id_token(id_token)
+            g.user = decoded_token
+        except auth.InvalidIdTokenError:
+            return jsonify({'message': 'Invalid token'}), 401
+        except auth.ExpiredIdTokenError:
+            return jsonify({'message': 'Token has expired'}), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
 
 def _to_float(value, default=0.0):
     try:
@@ -385,6 +409,7 @@ def test_firebase():
 
 
 @app.route('/generate-signed-url', methods=['POST', 'OPTIONS'])
+@token_required
 def generate_signed_url():
     # Generate a signed URL for uploading a file to Google Cloud Storage.
     try:
@@ -393,7 +418,7 @@ def generate_signed_url():
             response = jsonify({'message': 'Preflight OK'})
             response.headers.add('Access-Control-Allow-Origin', '*')
             response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
             return response
 
         # Handle POST request
@@ -617,6 +642,7 @@ def get_exercise_analysis(video_id):
         }), 500
 
 @app.route('/save-video-info', methods=['POST'])
+@token_required
 def save_video_info():
     try:
         data = request.get_json()
@@ -628,7 +654,7 @@ def save_video_info():
 
         # Save metadata to Firestore with videoID as the document ID
         db.collection("userVideos").document(video_id).set({
-            "email": data.get("email"),
+            "email": g.user['email'],
             "weight": _to_float(data.get("weight")),
             "height": data.get("height"),
             "load": _to_float(data.get("load")),
@@ -653,6 +679,7 @@ def save_video_info():
         return jsonify({"error": "Internal Server Error"}), 500
     
 @app.route('/video-status/<video_name>', methods=['GET'])
+@token_required
 def get_video_status(video_name):
     log_extra = {"video_name": video_name}
     try:
@@ -696,6 +723,38 @@ def get_video_status(video_name):
         return jsonify({
             'status': 'error',
             'message': 'Error checking video status'
+        }), 500
+
+@app.route('/get-user-videos', methods=['GET'])
+@token_required
+def get_user_videos():
+    """
+    Fetches all video documents for a given user's email.
+    """
+    user_email = g.user['email']
+    log_extra = {"user_email": user_email}
+    logging.info("Fetching videos for user.", extra=log_extra)
+
+    try:
+        # Query the 'userVideos' collection
+        videos_query = db.collection("userVideos").where("email", "==", user_email)
+        results = videos_query.stream()
+
+        # Convert the results to a list of dictionaries
+        videos_list = [doc.to_dict() for doc in results]
+
+        # Sort the list in Python by the 'uploadedAt' key
+        videos_list.sort(key=lambda x: x.get('uploadedAt'), reverse=True)
+
+        logging.info(f"Found {len(videos_list)} videos for user.", extra=log_extra)
+        
+        return jsonify(videos_list), 200
+
+    except Exception as e:
+        logging.error(f"Error fetching user videos: {e}", exc_info=True, extra=log_extra)
+        return jsonify({
+            'status': 'error',
+            'message': 'Internal server error while fetching videos'
         }), 500
 
 if __name__ == '__main__':
